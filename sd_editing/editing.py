@@ -17,6 +17,7 @@ from .masks import (
     otsu_threshold,
     preprocess_mask,
     dilate_mask,
+    erode_mask,
     build_base_mask_from_inversion_attn,
     keep_largest_component,
     binary_from_mask,
@@ -60,6 +61,8 @@ def reconstruct_ddim_with_attention_restoration(
     recon_blur_k=5,
     transition_gap_radius=0,
     alpha_decay_start=0.5,
+    recon_alpha_decay=False,
+    recon_attn_start_frac=0.0,
 
     # debug
     debug_dir=None,
@@ -176,6 +179,8 @@ def reconstruct_ddim_with_attention_restoration(
         if have_sam:
             sam_bin = grounded_sam_mask(source_image, tokens, grounded_sam, latent_spatial)
             main_mask = _cast(sam_bin)
+            if base_mask_erode_radius > 0:
+                main_mask = _cast(keep_largest_component(erode_mask(main_mask, radius=base_mask_erode_radius)))
             base_mask_soft = main_mask.clone()
             main_mask_bin = main_mask.clone()
         else:
@@ -336,14 +341,14 @@ def reconstruct_ddim_with_attention_restoration(
             if use_inversion_attention_transmission and need_base_mask:
                 mask2 = torch.maximum(mask2, mask * alpha_t)
 
-            if use_reconstruction_attention_transmission and recon_mask_dilated is not None:
+            if use_reconstruction_attention_transmission and recon_mask_dilated is not None and progress >= recon_attn_start_frac:
                 if need_base_mask:
                     
                     mask_gap = dilate_mask(main_mask_bin, radius=transition_gap_radius) if transition_gap_radius > 0 else main_mask_bin
                     recon_ring = (recon_mask_dilated - mask_gap).clamp(0, 1)
                 else:
                     recon_ring = recon_mask_dilated.clamp(0, 1)
-                mask2 = torch.maximum(mask2, recon_ring)
+                mask2 = torch.maximum(mask2, recon_ring * (alpha_t if recon_alpha_decay else 1.0))
 
             mask2 = _cast((transmission_alpha * mask2).clamp(0, 1))
             if mask2.shape[-2:] != latent_spatial:
@@ -364,7 +369,8 @@ def reconstruct_ddim_with_attention_restoration(
                 os.makedirs(step_dir, exist_ok=True)
 
                 # base mask (inversion-derived or SAM, same every step)
-                _save_map_png(base_mask_raw_2d, os.path.join(step_dir, "00_base_attn_avg.png"), size=latent_spatial, normalize=True)
+                if base_mask_source != "sam":
+                    _save_map_png(base_mask_raw_2d, os.path.join(step_dir, "00_base_attn_avg.png"), size=latent_spatial, normalize=True)
                 _save_map_png(base_mask_soft, os.path.join(step_dir, "01_base_mask_soft.png"))
                 _save_map_png(main_mask_bin, os.path.join(step_dir, "02_base_mask.png"))
 

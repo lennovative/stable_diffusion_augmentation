@@ -70,6 +70,8 @@ def run_batch_inversion_and_editing(
     recon_dilate_radius: int = 2,
     transition_gap_radius: int = 0,
     alpha_decay_start: float = 0.5,
+    recon_alpha_decay: bool = False,
+    recon_attn_start_frac: float = 0.0,
 
     # pass 2 / polish
     second_pass_polish: bool = True,
@@ -92,6 +94,8 @@ def run_batch_inversion_and_editing(
     polish_recon_dilate_radius: int = 2,
     polish_transition_gap_radius: int = 0,
     polish_alpha_decay_start: float = 0.5,
+    polish_recon_alpha_decay: bool = False,
+    polish_recon_attn_start_frac: float = 0.0,
 
     save_pre_polish: bool = True,
 ) -> List[dict]:
@@ -164,7 +168,7 @@ def run_batch_inversion_and_editing(
         concept_out = output_dir / folder_name
         concept_out.mkdir(parents=True, exist_ok=True)
 
-        inv_prompt = "" if inversion_prompt_mode == "empty" else f"a photo of {target_attribute}"
+        inv_prompt = "" if inversion_prompt_mode == "empty" else f"photo of a {target_attribute}"
 
         for image_path in image_paths:
             stem = _safe_name(image_path.stem)
@@ -222,6 +226,8 @@ def run_batch_inversion_and_editing(
                     recon_dilate_radius=recon_dilate_radius,
                     transition_gap_radius=transition_gap_radius,
                     alpha_decay_start=alpha_decay_start,
+                    recon_alpha_decay=recon_alpha_decay,
+                    recon_attn_start_frac=recon_attn_start_frac,
                     multi_token_merge=multi_token_merge,
                     base_mask_source=base_mask_source,
                     source_image=source_image,
@@ -295,6 +301,8 @@ def run_batch_inversion_and_editing(
                         recon_dilate_radius=polish_recon_dilate_radius,
                         transition_gap_radius=polish_transition_gap_radius,
                         alpha_decay_start=polish_alpha_decay_start,
+                        recon_alpha_decay=polish_recon_alpha_decay,
+                        recon_attn_start_frac=polish_recon_attn_start_frac,
                         multi_token_merge=multi_token_merge,
                         base_mask_source=base_mask_source,
                         source_image=source_image,

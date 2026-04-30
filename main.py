@@ -8,7 +8,6 @@ Usage:
 
 import shutil
 import sys
-import json
 import configparser
 from pathlib import Path
 import torch
@@ -44,9 +43,19 @@ def next_run_dir(base_dir):
 
 
 def load_concepts(path):
+    concepts = {}
     with open(path) as f:
-        raw = json.load(f)
-    return {name: (entry["template"], entry["tokens"]) for name, entry in raw.items()}
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith(";"):
+                continue
+            name, rest = line.split("=", 1)
+            template, tokens_str = rest.split("|", 1)
+            concepts[name.strip()] = (
+                template.strip(),
+                [t.strip() for t in tokens_str.split(",")],
+            )
+    return concepts
 
 
 def load_prompts(path):
@@ -95,14 +104,11 @@ def main():
 
         # generation
         num_inference_steps=g.getint("num_inference_steps"),
-        inversion_guidance_scale=g.getfloat("inversion_guidance_scale"),
-        edit_guidance_scale=g.getfloat("edit_guidance_scale"),
         input_size=g.getint("input_size"),
         attention_res=g.getint("attention_res"),
         allowed_places=_parse_tuple_of_strings(g["allowed_places"]),
         base_mask_step_range=_parse_float_pair(g["base_mask_step_range"]),
         invert_mask=g.getboolean("invert_mask"),
-        eta=g.getfloat("eta"),
         multi_token_merge=g["multi_token_merge"],
         base_mask_source=g["base_mask_source"],
         grounded_sam=grounded_sam,
@@ -112,6 +118,9 @@ def main():
 
         # pass 1
         inversion_prompt_mode=p1["inversion_prompt_mode"],
+        inversion_guidance_scale=p1.getfloat("inversion_guidance_scale"),
+        edit_guidance_scale=p1.getfloat("guidance_scale"),
+        eta=p1.getfloat("eta"),
         invert_frac=p1.getfloat("invert_frac"),
         use_inversion_attention_transmission=p1.getboolean("use_inversion_attention_transmission"),
         use_reconstruction_attention_transmission=p1.getboolean("use_reconstruction_attention_transmission"),
@@ -121,6 +130,8 @@ def main():
         recon_dilate_radius=p1.getint("recon_dilate_radius"),
         transition_gap_radius=p1.getint("transition_gap_radius"),
         alpha_decay_start=p1.getfloat("alpha_decay_start"),
+        recon_alpha_decay=p1.getboolean("recon_alpha_decay"),
+        recon_attn_start_frac=p1.getfloat("recon_attn_start_frac"),
 
         # pass 2
         second_pass_polish=p2.getboolean("enabled"),
@@ -138,6 +149,8 @@ def main():
         polish_recon_dilate_radius=p2.getint("recon_dilate_radius"),
         polish_transition_gap_radius=p2.getint("transition_gap_radius"),
         polish_alpha_decay_start=p2.getfloat("alpha_decay_start"),
+        polish_recon_alpha_decay=p2.getboolean("recon_alpha_decay"),
+        polish_recon_attn_start_frac=p2.getfloat("recon_attn_start_frac"),
         save_pre_polish=p2.getboolean("save_pre_polish"),
     )
 
