@@ -2,12 +2,12 @@
 SD 1.5 attention-guided image editing.
 
 Usage:
-    python main.py              # uses config.ini in current directory
-    python main.py my_run.ini   # uses a specific config file
+    python main.py --base-dir <dir> --output-dir <dir> --concepts <file> --prompts <file>
+    python main.py my_run.ini --base-dir <dir> --output-dir <dir> --concepts <file> --prompts <file>
 """
 
+import argparse
 import shutil
-import sys
 import configparser
 from pathlib import Path
 import torch
@@ -64,8 +64,15 @@ def load_prompts(path):
 
 
 def main():
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "config.ini"
-    cfg = load_config(config_path)
+    parser = argparse.ArgumentParser(description="SD 1.5 attention-guided image editing")
+    parser.add_argument("config", nargs="?", default="config.ini")
+    parser.add_argument("--base-dir", required=True)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--concepts", required=True)
+    parser.add_argument("--prompts", required=True)
+    args = parser.parse_args()
+
+    cfg = load_config(args.config)
 
     g = cfg["generation"]
     p1 = cfg["pass1"]
@@ -91,15 +98,15 @@ def main():
             edge_blur_radius=s.getint("edge_blur_radius"),
         )
 
-    run_dir = next_run_dir(cfg["paths"]["output_dir"])
-    shutil.copy(config_path, run_dir / "config.ini")
+    run_dir = next_run_dir(args.output_dir)
+    shutil.copy(args.config, run_dir / "config.ini")
     print(f"Run directory: {run_dir}")
 
     results = run_batch_inversion_and_editing(
         pipe=pipe,
-        base_dir=cfg["paths"]["base_dir"],
-        concept_targets=load_concepts(cfg["paths"]["concepts"]),
-        edit_prompts=load_prompts(cfg["paths"]["prompts"]),
+        base_dir=args.base_dir,
+        concept_targets=load_concepts(args.concepts),
+        edit_prompts=load_prompts(args.prompts),
         output_dir=run_dir,
 
         # generation
