@@ -56,6 +56,7 @@ def reconstruct_ddim_with_attention_restoration(
     use_inversion_attention_transmission=True,
     use_reconstruction_attention_transmission=True,
     transmission_alpha=1.0,
+    transmission_alpha_end=0.0,
     initial_noise_beta=0.75,
     recon_dilate_radius=2,
     recon_blur_k=5,
@@ -271,7 +272,8 @@ def reconstruct_ddim_with_attention_restoration(
             if progress <= alpha_decay_start:
                 alpha_t = 1.0
             else:
-                alpha_t = max(0.0, 1.0 - (progress - alpha_decay_start) / max(1.0 - alpha_decay_start, 1e-8))
+                t_frac = max(0.0, 1.0 - (progress - alpha_decay_start) / max(1.0 - alpha_decay_start, 1e-8))
+                alpha_t = transmission_alpha_end + (1.0 - transmission_alpha_end) * t_frac
 
             use_stage1 = use_inversion_attention_transmission and need_base_mask and transmission_alpha > 0.0
 
@@ -407,6 +409,7 @@ def reconstruct_ddim_with_attention_restoration(
                     f.write(f"progress={progress:.4f}\n")
                     f.write(f"alpha_t={alpha_t:.4f}\n")
                     f.write(f"alpha_decay_start={alpha_decay_start}\n")
+                    f.write(f"transmission_alpha_end={transmission_alpha_end}\n")
                     f.write(f"inversion_otsu_threshold={inv_otsu_thr}\n")
                     f.write(f"reconstruction_otsu_threshold={recon_otsu_thr}\n")
                     f.write(f"use_inversion_attention_transmission={use_inversion_attention_transmission}\n")
