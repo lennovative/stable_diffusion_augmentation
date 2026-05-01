@@ -17,7 +17,7 @@ $$A^{\mathrm{base}} = \frac{1}{|\mathcal{S}_{\mathrm{base}}|} \sum_{t \in \mathc
 
 The inversion mask is then obtained by preprocessing, thresholding, and retaining only the largest connected component (LCC):
 
-$$M^{\mathrm{inv}} = \text{LCC}\!\left(\text{Thresh}(\mathcal{P}(A^{\mathrm{base}}))\right)$$
+$$M^{\mathrm{inv}} = \text{LCC}\left(\text{Thresh}(\mathcal{P}(A^{\mathrm{base}}))\right)$$
 
 Alternatively, the base mask can be sourced from a GroundingDINO + SAM segmentation instead of attention maps (`base_mask_source = sam` in config).
 
@@ -30,11 +30,11 @@ where $\alpha_t \in [0,1]$ is a timestep-dependent decay factor (controlled by `
 
 After denoising $\tilde{z}_t$ under the edit prompt to obtain $z^{\mathrm{rec}}_t$, a reconstruction attention map $A^{\mathrm{rec}}_t$ is computed and converted into a binary reconstruction mask:
 
-$$M^{\mathrm{rec}}_t = \text{Dilate}\!\left(\text{LCC}\!\left(\text{Thresh}(\mathcal{P}(A^{\mathrm{rec}}_t))\right)\right)$$
+$$M^{\mathrm{rec}}_t = \text{Dilate}\left(\text{LCC}\left(\text{Thresh}(\mathcal{P}(A^{\mathrm{rec}}_t))\right)\right)$$
 
 The final per-step mask merges both sources:
 
-$$M_t = \max\!\left(M^{\mathrm{inv}}_t,\; M^{\mathrm{rec}}_t\right)$$
+$$M_t = \max\left(M^{\mathrm{inv}}_t,\; M^{\mathrm{rec}}_t\right)$$
 
 The latent passed to the next step is:
 
