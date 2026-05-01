@@ -61,7 +61,7 @@ def grounded_sam_mask(image_pil, tokens, grounded_sam, target_size):
     results = gd_processor.post_process_grounded_object_detection(
         outputs,
         inputs.input_ids,
-        box_threshold=box_threshold,
+        threshold=box_threshold,
         text_threshold=text_threshold,
         target_sizes=[image_pil.size[::-1]],  # (H, W)
     )[0]
