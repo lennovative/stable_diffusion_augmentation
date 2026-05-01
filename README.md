@@ -1,12 +1,18 @@
 # Stable Diffusion Augmentation via Attention-Guided Latent Transmission
 
-This repository implements an attention-guided image editing pipeline built on Stable Diffusion 1.5. Given an image of an object and an edit prompt, it generates a new image where the background is replaced according to the prompt while the object itself is preserved.
+This repository implements a training-free, optimization-free attention-guided image editing pipeline built on Stable Diffusion 1.5. Given an image of an object and an edit prompt, it generates a new image where the background is replaced according to the prompt while the object itself is preserved.
 
-![Method Overview](method_overview.png)
+![Editing examples on DreamBooth dataset](assets/examples.png)
+
+*Each row: input image, SAM reconstruction mask, and six background edits across different prompts. Subjects are from the [google/dreambooth](https://github.com/google/dreambooth) dataset.*
+
+---
 
 ## How it works
 
-The method runs a two-pass DDIM inversion and reconstruction loop. In the first pass, cross-attention maps for the target concept token are used to anchor the object to its original latent region while the background is freely edited. An optional second pass polishes the result with a shorter inversion from the first-pass output.
+The method runs a two-pass DDIM inversion and reconstruction loop. In the first pass, cross-attention maps from the inversion are used to anchor the object to its original latent region, while reconstruction-time attention maps dynamically suppress concept leakage into the background. An optional second pass polishes the result with a shorter inversion from the first-pass output.
+
+![Method Overview](assets/method_overview.png)
 
 ### Pass 1 — Attention-based latent transmission
 
@@ -47,6 +53,24 @@ A second DDIM inversion runs on the pass-1 output, but only partially (`invert_f
 
 ---
 
+## Motivation
+
+A naïve approach to background editing with DDIM inversion transmits only the **inversion latents** inside the object mask — blending $z^{\mathrm{inv}}_t$ in the protected region at every denoising step. This suppresses unwanted edits to the object but introduces a failure mode: the edit prompt's **text embeddings still attend to the entire latent**, so the concept token can "leak" outside the protected region and cause the newly generated background to contain spurious copies or fragments of the subject.
+
+The figure below compares the inversion-only baseline (middle column) against the combined mask used in this work (right column):
+
+<img src="assets/embedding_leakage_showcase.png" width="300"/>
+
+The fix is to additionally compute a **reconstruction attention mask** at each denoising step, which tracks where the edit-prompt concept is actively attending in the *reconstruction* pass. Dilating this mask and merging it with the inversion mask produces a per-step combined mask $M_t = \max(M^{\mathrm{inv}}_t, M^{\mathrm{rec}}_t)$ that suppresses leakage as it emerges, without requiring any additional training or optimization.
+
+**Why a second pass?**
+Pass 1 preserves the object's structure but the blending boundary can leave lighting and texture seams at the object edge. Pass 2 re-inverts the Pass 1 output with a short inversion (`invert_frac = 0.5`) and runs a light refinement denoising pass. Because the inversion starts from a near-clean latent and uses no reconstruction attention transmission, it acts purely as a polishing step — smoothing boundaries and harmonising illumination — rather than re-editing the scene. Note that Pass 2 is not always relevant: whether it improves the result depends on the concept, the edit prompt, and the random seed, and in some cases the Pass 1 output is the cleaner result.
+
+<img src="assets/pass2_comparison.png" width="800"/>
+
+
+---
+
 ## Setup
 
 ```bash
@@ -58,7 +82,7 @@ pip install -r requirements.txt
 bash download_dreambooth_dataset.sh
 ```
 
-This sparse-clones only the `dataset/` folder from the [google/dreambooth](https://github.com/google/dreambooth) repository into `input_data/images_dreambooth/`.
+This clones only the `dataset/` folder from the [google/dreambooth](https://github.com/google/dreambooth) repository into `input_data/images_dreambooth/`.
 
 ---
 
@@ -92,7 +116,7 @@ duck_toy = yellow rubber duck | duck
 **Prompts file** (`input_data/prompts.txt`): one edit prompt per line, with `{}` as the concept placeholder:
 ```
 photo of a {} in the jungle
-photo of a {} deep underwater surrounded by fishes
+photo of a {} deep underwater
 ```
 
 ---
