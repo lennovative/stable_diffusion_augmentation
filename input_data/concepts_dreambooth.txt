@@ -1,7 +1,7 @@
 # name = template | token1, token2, ...
-#backpack           = bright red backpack    | backpack
-#backpack_dog       = beige backpack         | backpack
-#bear_plushie       = brown teddy bear       | bear
+backpack           = bright red backpack    | backpack
+backpack_dog       = beige backpack         | backpack
+bear_plushie       = brown teddy bear       | bear
 berry_bowl         = white berry bowl       | bowl
 can                = blue beer can          | can
 candle             = white candle           | candle
