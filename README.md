@@ -34,7 +34,7 @@ $$M^{\mathrm{rec}}_t = \text{Dilate}\left(\text{LCC}\left(\text{Thresh}(\mathcal
 
 The final per-step mask merges both sources:
 
-$$M_t = \max\left(M^{\mathrm{inv}}_t,\; M^{\mathrm{rec}}_t\right)$$
+$$M_t = \max\left(M^{\mathrm{inv}}_t, M^{\mathrm{rec}}_t\right)$$
 
 The latent passed to the next step is:
 
