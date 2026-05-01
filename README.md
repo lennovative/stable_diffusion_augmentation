@@ -61,7 +61,7 @@ The figure below compares the inversion-only baseline (middle column) against th
 
 <img src="assets/embedding_leakage_showcase.png" width="300"/>
 
-The fix is to additionally compute a **reconstruction attention mask** at each denoising step, which tracks where the edit-prompt concept is actively attending in the *reconstruction* pass. Dilating this mask and merging it with the inversion mask produces a per-step combined mask $M_t = \max(M^{\mathrm{inv}}_t, M^{\mathrm{rec}}_t)$ that suppresses leakage as it emerges, without requiring any additional training or optimization.
+The fix is to additionally compute a **reconstruction attention mask** at each denoising step, which tracks where the edit-prompt concept is actively attending in the *reconstruction* pass. Merging it with the inversion mask produces a per-step combined mask $M_t = \max(M^{\mathrm{inv}}_t, M^{\mathrm{rec}}_t)$ that suppresses leakage as it emerges.
 
 **Why a second pass?**
 Pass 1 preserves the object's structure but the blending boundary can leave lighting and texture seams at the object edge. Pass 2 re-inverts the Pass 1 output with a short inversion (`invert_frac = 0.5`) and runs a light refinement denoising pass. Because the inversion starts from a near-clean latent and uses no reconstruction attention transmission, it acts purely as a polishing step — smoothing boundaries and harmonising illumination — rather than re-editing the scene. Note that Pass 2 is not always relevant: whether it improves the result depends on the concept, the edit prompt, and the random seed, and in some cases the Pass 1 output is the cleaner result.
