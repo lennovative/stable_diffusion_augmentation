@@ -149,7 +149,6 @@ stable_diffusion_augmentation/
 │   ├── concepts_dreambooth.txt    # Concept definitions
 │   ├── prompts.txt                # Edit prompts
 │   └── images_dreambooth/         # Input images (one folder per concept)
-├── output/                        # Numbered run directories
 └── sd_editing/
     ├── pipeline.py                # SD 1.5 pipeline setup
     ├── inversion.py               # DDIM inversion
