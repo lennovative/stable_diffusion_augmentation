@@ -1,6 +1,25 @@
-photo of a {} in the jungle, mossy ground
-photo of a {} in a snowstorm at night
-photo of a {} in a futuristic city at night
-photo of a {} in a hot desert, red sand
-photo of a {} on a frozen lake, clear reflection on the icy surface
-photo of a {} deep underwater surrounded by fishes, sandy ground
+a {} in the snow at night
+a {} in a dense foggy forest
+a {} caught in a lightning storm
+a {} in heavy rainfall at dusk
+a {} in a blizzard, snow-covered ground
+a {} in a futuristic city at night
+a {} in a warmly lit cozy kitchen
+a {} in a dark cave
+a {} in a neon-lit arcade
+a {} in a dusty old library
+a {} at the beach, blazing sun
+a {} with a sunset in the background
+a {} under harsh midday overhead sun, strong shadows
+a {} under blue stage lights
+a {} on the moon
+a {} on mars
+a {} in an ancient temple
+a {} in outer space, stars and nebula behind
+a {} on a volcanic island, lava glowing nearby
+a {} on a frozen lake, clear reflection
+a {} on wet cobblestone streets at night, reflections
+a {} beside a still mountain lake, mirror reflection
+a {} in the jungle, mossy ground
+a {} in the desert, red sand
+a {} deep underwater, surrounded by fish

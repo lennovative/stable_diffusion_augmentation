@@ -40,6 +40,8 @@ def run_batch_inversion_and_editing(
     concept_targets: Dict[str, Tuple[str, List[str]]],
     edit_prompts: Iterable[str],
     output_dir: str,
+    image_filter: Dict[str, set] = None,
+    save_debug: bool = True,
     image_extensions=(".png", ".jpg", ".jpeg", ".webp", ".bmp"),
 
     # shared generation params
@@ -161,6 +163,9 @@ def run_batch_inversion_and_editing(
 
         _, tokens, target_attribute = _get_target_spec(folder_name)
         image_paths = _list_images(subfolder)
+        if image_filter and folder_name in image_filter:
+            allowed = image_filter[folder_name]
+            image_paths = [p for p in image_paths if p.name in allowed]
         if not image_paths:
             print(f"[SKIP] No images in {subfolder}")
             continue
@@ -201,9 +206,9 @@ def run_batch_inversion_and_editing(
                 prompt_name = _safe_name(f"{prompt_idx:02d}_{edit_prompt}")
                 file_prefix = f"{stem}__{prompt_name}"
 
-                debug_root = concept_out / f"{file_prefix}__debug"
-                pass1_debug = debug_root / "pass1"
-                pass2_debug = debug_root / "pass2_polish"
+                debug_root = concept_out / f"{file_prefix}__debug" if save_debug else None
+                pass1_debug = debug_root / "pass1" if save_debug else None
+                pass2_debug = debug_root / "pass2_polish" if save_debug else None
 
                 print(f"[EDIT:PASS1] {image_path.name}  prompt={edit_prompt!r}")
 
@@ -235,7 +240,7 @@ def run_batch_inversion_and_editing(
                     base_mask_source=base_mask_source,
                     source_image=source_image,
                     grounded_sam=grounded_sam,
-                    debug_dir=str(pass1_debug),
+                    debug_dir=str(pass1_debug) if pass1_debug else None,
                     save_debug_every=save_debug_every,
                     save_debug_latents=save_debug_latents,
                 )
@@ -311,7 +316,7 @@ def run_batch_inversion_and_editing(
                         base_mask_source=base_mask_source,
                         source_image=source_image,
                         grounded_sam=grounded_sam,
-                        debug_dir=str(pass2_debug),
+                        debug_dir=str(pass2_debug) if pass2_debug else None,
                         save_debug_every=save_debug_every,
                         save_debug_latents=save_debug_latents,
                     )
@@ -319,32 +324,32 @@ def run_batch_inversion_and_editing(
                 edited_path = concept_out / f"{file_prefix}.png"
                 edited.save(edited_path)
 
-                # write metadata
-                debug_root.mkdir(parents=True, exist_ok=True)
-                with open(debug_root / "metadata.txt", "w", encoding="utf-8") as f:
-                    f.write(f"folder_name: {folder_name}\n")
-                    f.write(f"image_path: {image_path}\n")
-                    f.write(f"tokens: {tokens}\n")
-                    f.write(f"multi_token_merge: {multi_token_merge}\n")
-                    f.write(f"target_attribute: {target_attribute}\n")
-                    f.write(f"edit_prompt: {edit_prompt}\n\n")
-                    f.write(f"[PASS1]\n")
-                    f.write(f"inversion_prompt: {inv_prompt}\n")
-                    f.write(f"num_inference_steps: {num_inference_steps}\n")
-                    f.write(f"inversion_guidance_scale: {inversion_guidance_scale}\n")
-                    f.write(f"edit_guidance_scale: {edit_guidance_scale}\n")
-                    f.write(f"input_size: {input_size}\n")
-                    f.write(f"attention_res: {attention_res}\n")
-                    f.write(f"allowed_places: {allowed_places}\n")
-                    f.write(f"eta: {eta}\n")
-                    f.write(f"transmission_alpha: {transmission_alpha}\n")
-                    f.write(f"initial_noise_beta: {initial_noise_beta}\n\n")
-                    f.write(f"[PASS2_POLISH]\n")
-                    f.write(f"enabled: {second_pass_polish}\n")
-                    if second_pass_polish:
-                        f.write(f"polish_invert_frac: {polish_invert_frac}\n")
-                        f.write(f"polish_guidance_scale: {edit_guidance_scale if polish_guidance_scale is None else polish_guidance_scale}\n")
-                        f.write(f"polish_transmission_alpha: {polish_transmission_alpha}\n")
+                if save_debug:
+                    debug_root.mkdir(parents=True, exist_ok=True)
+                    with open(debug_root / "metadata.txt", "w", encoding="utf-8") as f:
+                        f.write(f"folder_name: {folder_name}\n")
+                        f.write(f"image_path: {image_path}\n")
+                        f.write(f"tokens: {tokens}\n")
+                        f.write(f"multi_token_merge: {multi_token_merge}\n")
+                        f.write(f"target_attribute: {target_attribute}\n")
+                        f.write(f"edit_prompt: {edit_prompt}\n\n")
+                        f.write(f"[PASS1]\n")
+                        f.write(f"inversion_prompt: {inv_prompt}\n")
+                        f.write(f"num_inference_steps: {num_inference_steps}\n")
+                        f.write(f"inversion_guidance_scale: {inversion_guidance_scale}\n")
+                        f.write(f"edit_guidance_scale: {edit_guidance_scale}\n")
+                        f.write(f"input_size: {input_size}\n")
+                        f.write(f"attention_res: {attention_res}\n")
+                        f.write(f"allowed_places: {allowed_places}\n")
+                        f.write(f"eta: {eta}\n")
+                        f.write(f"transmission_alpha: {transmission_alpha}\n")
+                        f.write(f"initial_noise_beta: {initial_noise_beta}\n\n")
+                        f.write(f"[PASS2_POLISH]\n")
+                        f.write(f"enabled: {second_pass_polish}\n")
+                        if second_pass_polish:
+                            f.write(f"polish_invert_frac: {polish_invert_frac}\n")
+                            f.write(f"polish_guidance_scale: {edit_guidance_scale if polish_guidance_scale is None else polish_guidance_scale}\n")
+                            f.write(f"polish_transmission_alpha: {polish_transmission_alpha}\n")
 
                 summary.append({
                     "folder_name": folder_name,

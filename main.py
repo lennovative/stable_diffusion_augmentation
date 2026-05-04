@@ -58,6 +58,19 @@ def load_concepts(path):
     return concepts
 
 
+def load_image_filter(path):
+    """Parse image_filter_dreambooth.txt → {concept: {filename, ...}}."""
+    filters = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith(";"):
+                continue
+            name, images_str = line.split("=", 1)
+            filters[name.strip()] = {img.strip() for img in images_str.split(",") if img.strip()}
+    return filters
+
+
 def load_prompts(path):
     with open(path) as f:
         return [line.rstrip("\n") for line in f if line.strip()]
@@ -69,6 +82,7 @@ def main():
     parser.add_argument("--base-dir", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--concepts", required=True)
+    parser.add_argument("--image-filter", default=None)
     parser.add_argument("--prompts", required=True)
     args = parser.parse_args()
 
@@ -106,6 +120,7 @@ def main():
         pipe=pipe,
         base_dir=args.base_dir,
         concept_targets=load_concepts(args.concepts),
+        image_filter=load_image_filter(args.image_filter) if args.image_filter else {},
         edit_prompts=load_prompts(args.prompts),
         output_dir=run_dir,
 
@@ -119,6 +134,7 @@ def main():
         multi_token_merge=g["multi_token_merge"],
         base_mask_source=g["base_mask_source"],
         grounded_sam=grounded_sam,
+        save_debug=g.getboolean("save_debug"),
         save_debug_every=g.getint("save_debug_every"),
         save_debug_latents=g.getboolean("save_debug_latents"),
         save_inversion_pickle=g.getboolean("save_inversion_pickle"),
