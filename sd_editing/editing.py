@@ -205,6 +205,7 @@ def reconstruct_ddim_with_attention_restoration(
                 main_mask = _cast(main_mask)
 
             main_mask_bin = main_mask.clone()
+            main_mask = base_mask_soft * main_mask_bin
     else:
         base_mask_soft = _cast(base_mask_soft)
         main_mask_bin = _cast(main_mask_bin)
