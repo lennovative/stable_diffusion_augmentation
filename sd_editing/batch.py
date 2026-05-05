@@ -75,6 +75,8 @@ def run_batch_inversion_and_editing(
     alpha_decay_start: float = 0.5,
     recon_alpha_decay: bool = False,
     recon_attn_start_frac: float = 0.0,
+    token_replace_frac: float = 0.0,
+    token_replace_generic: str = "subject",
 
     # pass 2 / polish
     second_pass_polish: bool = True,
@@ -100,6 +102,8 @@ def run_batch_inversion_and_editing(
     polish_alpha_decay_start: float = 0.5,
     polish_recon_alpha_decay: bool = False,
     polish_recon_attn_start_frac: float = 0.0,
+    polish_token_replace_frac: float = 0.0,
+    polish_token_replace_generic: str = "subject",
 
     save_pre_polish: bool = True,
 ) -> List[dict]:
@@ -236,6 +240,8 @@ def run_batch_inversion_and_editing(
                     alpha_decay_start=alpha_decay_start,
                     recon_alpha_decay=recon_alpha_decay,
                     recon_attn_start_frac=recon_attn_start_frac,
+                    token_replace_frac=token_replace_frac,
+                    token_replace_generic=token_replace_generic,
                     multi_token_merge=multi_token_merge,
                     base_mask_source=base_mask_source,
                     source_image=source_image,
@@ -312,6 +318,8 @@ def run_batch_inversion_and_editing(
                         alpha_decay_start=polish_alpha_decay_start,
                         recon_alpha_decay=polish_recon_alpha_decay,
                         recon_attn_start_frac=polish_recon_attn_start_frac,
+                        token_replace_frac=polish_token_replace_frac,
+                        token_replace_generic=polish_token_replace_generic,
                         multi_token_merge=multi_token_merge,
                         base_mask_source=base_mask_source,
                         source_image=source_image,

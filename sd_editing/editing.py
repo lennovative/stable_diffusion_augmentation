@@ -1,4 +1,5 @@
 import os
+import re
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -22,6 +23,16 @@ from .masks import (
     keep_largest_component,
     binary_from_mask,
 )
+
+
+def _replace_tokens_in_prompt(prompt, tokens, generic_token):
+    result = prompt
+    for token in tokens:
+        result = re.sub(r"\b" + re.escape(token) + r"\b", generic_token, result)
+    # collapse consecutive identical generic tokens into one
+    pattern = r"\b(" + re.escape(generic_token) + r")(\s+\1)+"
+    result = re.sub(pattern, r"\1", result)
+    return result
 
 
 def _has_any_attention_maps(attns_all):
@@ -64,6 +75,8 @@ def reconstruct_ddim_with_attention_restoration(
     alpha_decay_start=0.5,
     recon_alpha_decay=False,
     recon_attn_start_frac=0.0,
+    token_replace_frac=0.0,
+    token_replace_generic="subject",
 
     # debug
     debug_dir=None,
@@ -250,6 +263,15 @@ def reconstruct_ddim_with_attention_restoration(
 
     prompt_embeds = _cast(encode_prompt_cfg(pipe, prompt, guidance_scale=guidance_scale))
 
+    prompt_embeds_generic = None
+    if token_replace_frac > 0.0 and tokens and prompt:
+        replaced_prompt = _replace_tokens_in_prompt(prompt, tokens, token_replace_generic)
+        if replaced_prompt != prompt:
+            print(f"[TOKEN_REPLACE] frac={token_replace_frac}  prompt: {prompt!r} → {replaced_prompt!r}")
+            prompt_embeds_generic = _cast(encode_prompt_cfg(pipe, replaced_prompt, guidance_scale=guidance_scale))
+        else:
+            print(f"[TOKEN_REPLACE] No tokens from {tokens} found in prompt {prompt!r}. Feature disabled.")
+
     try:
         for step_index in range(start_index, num_inference_steps):
             progress = float(step_index) / float(num_inference_steps)
@@ -298,7 +320,12 @@ def reconstruct_ddim_with_attention_restoration(
             latent_input = lat_for_unet if guidance_scale <= 1.0 else torch.cat([lat_for_unet, lat_for_unet], dim=0)
             latent_input = _cast(pipe.scheduler.scale_model_input(latent_input, t))
 
-            noise_pred = _cast(pipe.unet(latent_input, t, encoder_hidden_states=prompt_embeds, return_dict=False)[0])
+            active_embeds = (
+                prompt_embeds_generic
+                if prompt_embeds_generic is not None and progress < token_replace_frac
+                else prompt_embeds
+            )
+            noise_pred = _cast(pipe.unet(latent_input, t, encoder_hidden_states=active_embeds, return_dict=False)[0])
 
             if guidance_scale > 1.0:
                 eps_u, eps_c = noise_pred.chunk(2)

@@ -156,6 +156,8 @@ def main():
         alpha_decay_start=p1.getfloat("alpha_decay_start"),
         recon_alpha_decay=p1.getboolean("recon_alpha_decay"),
         recon_attn_start_frac=p1.getfloat("recon_attn_start_frac"),
+        token_replace_frac=p1.getfloat("token_replace_frac"),
+        token_replace_generic=p1["token_replace_generic"],
 
         # pass 2
         second_pass_polish=p2.getboolean("enabled"),
@@ -176,6 +178,8 @@ def main():
         polish_alpha_decay_start=p2.getfloat("alpha_decay_start"),
         polish_recon_alpha_decay=p2.getboolean("recon_alpha_decay"),
         polish_recon_attn_start_frac=p2.getfloat("recon_attn_start_frac"),
+        polish_token_replace_frac=p2.getfloat("token_replace_frac"),
+        polish_token_replace_generic=p2["token_replace_generic"],
         save_pre_polish=p2.getboolean("save_pre_polish"),
     )
 
