@@ -138,6 +138,7 @@ def main():
         save_debug_every=g.getint("save_debug_every"),
         save_debug_latents=g.getboolean("save_debug_latents"),
         save_inversion_pickle=g.getboolean("save_inversion_pickle"),
+        seed=g.getint("seed", fallback=-1),
 
         # pass 1
         inversion_prompt_mode=p1["inversion_prompt_mode"],

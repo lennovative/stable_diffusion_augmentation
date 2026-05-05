@@ -60,6 +60,7 @@ def run_batch_inversion_and_editing(
     save_debug_every: int = 5,
     save_debug_latents: bool = False,
     save_inversion_pickle: bool = False,
+    seed: int = -1,
 
     # pass 1
     inversion_prompt_mode: str = "auto",    # "auto" (a photo of <subject>) | "empty"
@@ -157,6 +158,10 @@ def run_batch_inversion_and_editing(
         safe = safe.strip("._")
         return safe[:max_len]
 
+    if seed >= 0:
+        torch.manual_seed(seed)
+        print(f"[SEED] Using fixed seed {seed}")
+
     summary = []
 
     for subfolder in sorted(p for p in base_dir.iterdir() if p.is_dir()):
@@ -246,6 +251,7 @@ def run_batch_inversion_and_editing(
                     base_mask_source=base_mask_source,
                     source_image=source_image,
                     grounded_sam=grounded_sam,
+
                     debug_dir=str(pass1_debug) if pass1_debug else None,
                     save_debug_every=save_debug_every,
                     save_debug_latents=save_debug_latents,
@@ -324,6 +330,7 @@ def run_batch_inversion_and_editing(
                         base_mask_source=base_mask_source,
                         source_image=source_image,
                         grounded_sam=grounded_sam,
+    
                         debug_dir=str(pass2_debug) if pass2_debug else None,
                         save_debug_every=save_debug_every,
                         save_debug_latents=save_debug_latents,
@@ -336,6 +343,7 @@ def run_batch_inversion_and_editing(
                     debug_root.mkdir(parents=True, exist_ok=True)
                     with open(debug_root / "metadata.txt", "w", encoding="utf-8") as f:
                         f.write(f"folder_name: {folder_name}\n")
+                        f.write(f"seed: {seed}\n")
                         f.write(f"image_path: {image_path}\n")
                         f.write(f"tokens: {tokens}\n")
                         f.write(f"multi_token_merge: {multi_token_merge}\n")
