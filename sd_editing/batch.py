@@ -179,7 +179,7 @@ def run_batch_inversion_and_editing(
         concept_out = output_dir / folder_name
         concept_out.mkdir(parents=True, exist_ok=True)
 
-        inv_prompt = "" if inversion_prompt_mode == "empty" else f"photo of a {target_attribute}"
+        inv_prompt = "" if inversion_prompt_mode == "empty" else f"a {target_attribute}"
 
         for image_path in image_paths:
             stem = _safe_name(image_path.stem)
