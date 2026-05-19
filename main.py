@@ -159,6 +159,11 @@ def main():
         recon_attn_start_frac=p1.getfloat("recon_attn_start_frac"),
         token_replace_frac=p1.getfloat("token_replace_frac"),
         token_replace_generic=p1["token_replace_generic"],
+        asymmetric_schedule=p1.getboolean("asymmetric_schedule", fallback=False),
+        obj_start_frac=p1.getfloat("obj_start_frac", fallback=0.4),
+        bg_start_frac=p1.getfloat("bg_start_frac", fallback=0.75),
+        transmission_ramp_steps=p1.getint("transmission_ramp_steps", fallback=3),
+        recon_attn_sdedit_only=p1.getboolean("recon_attn_sdedit_only", fallback=False),
 
         # pass 2
         second_pass_polish=p2.getboolean("enabled"),

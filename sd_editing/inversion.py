@@ -59,6 +59,7 @@ def ddim_invert_store(
             image = image.resize((input_size, input_size), Image.Resampling.LANCZOS)
 
     latents = encode_image_to_latents(pipe, image).to(device=device, dtype=dtype)
+    z0 = latents.detach().cpu().clone()
     prompt_embeds = encode_prompt_cfg(pipe, prompt, guidance_scale=guidance_scale).to(device=device, dtype=dtype)
 
     if isinstance(tokens, str):
@@ -138,4 +139,5 @@ def ddim_invert_store(
         "prompt": prompt,
         "invert_frac": invert_frac,
         "num_inverse_steps": n_inverse_steps,
+        "z0": z0,
     }

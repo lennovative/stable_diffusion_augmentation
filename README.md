@@ -48,6 +48,18 @@ $$z^{\mathrm{next}}_t = M_t \odot z^{\mathrm{inv}}_t + (1 - M_t) \odot z^{\mathr
 
 The inversion attention anchors the concept to its original region; the reconstruction attention suppresses newly emerging off-target concept placements during denoising.
 
+**Asymmetric noise schedule (optional, SDEdit-inspired).**
+Enabled via `asymmetric_schedule = true` in `[pass1]`. Instead of inverting the image all the way to $t = T$ and denoising from there, Pass 1 uses two different effective starting noise levels for the object and background regions:
+
+- **Object region** — DDIM inversion is truncated at $t_{\mathrm{obj}} = \mathrm{round}(\texttt{obj\_start\_frac} \times T)$, retaining structural identity. The inversion latent $z^{\mathrm{inv}}_{t_{\mathrm{obj}}}$ is then forward-noised up to $t_{\mathrm{bg}}$ via the DDPM forward process.
+- **Background region** — the clean input latent $z_0$ is forward-noised directly to $t_{\mathrm{bg}} = \mathrm{round}(\texttt{bg\_start\_frac} \times T)$, giving SDEdit-style randomisation: enough noise that the model genuinely redraws the background under the edit prompt.
+
+Both branches share the same Gaussian noise sample at composition time, and are blended with the inversion mask $M^{\mathrm{inv}}$:
+
+$$z_{\mathrm{init}} = M^{\mathrm{inv}} \cdot q\!\left(z_{t_{\mathrm{bg}}} \mid z^{\mathrm{inv}}_{t_{\mathrm{obj}}}\right) + (1 - M^{\mathrm{inv}}) \cdot q\!\left(z_{t_{\mathrm{bg}}} \mid z_0\right)$$
+
+Denoising then runs from $t_{\mathrm{bg}}$ to $0$ in two phases: a free SDEdit phase $(t > t_{\mathrm{obj}})$ with no inversion-latent transmission, followed by the standard transmission phase $(t \leq t_{\mathrm{obj}})$ where inversion latents are blended back inside $M^{\mathrm{inv}}$. A short linear ramp (`transmission_ramp_steps`) on $\alpha_t$ at the phase boundary prevents seam artifacts. Truncated inversion is also a free speed-up: inversion runs for only `obj_start_frac` of the total steps instead of all of them.
+
 **Pass 2 — refinement (optional).**
 A second DDIM inversion runs on the pass-1 output, but only partially (`invert_frac = 0.5`). The inversion prompt is empty and no reconstruction attention transmission is used, so the pass acts purely as a light refinement rather than an aggressive re-edit. The result is saved alongside the pass-1 intermediate.
 

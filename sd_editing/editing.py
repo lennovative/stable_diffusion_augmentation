@@ -77,6 +77,15 @@ def reconstruct_ddim_with_attention_restoration(
     recon_attn_start_frac=0.0,
     token_replace_frac=0.0,
     token_replace_generic="subject",
+    concept_template=None,   # if set, replace this whole phrase instead of individual tokens
+
+    # asymmetric noise schedule (SDEdit-inspired)
+    asymmetric_schedule=False,
+    obj_start_frac=0.4,
+    bg_start_frac=0.75,
+    transmission_ramp_steps=3,
+    z0=None,             # clean image latent tensor (required when asymmetric_schedule=True)
+    recon_attn_sdedit_only=False,  # if True, disable recon attention transmission once t <= t_obj
 
     # debug
     debug_dir=None,
@@ -171,6 +180,35 @@ def reconstruct_ddim_with_attention_restoration(
     else:
         start_index = timestep_ints.index(t_start)
 
+    # ── asymmetric schedule: compute t_obj, t_bg, and override start_index ───
+    do_asym = asymmetric_schedule and z0 is not None
+    if asymmetric_schedule and z0 is None:
+        print("[WARN] asymmetric_schedule=True but z0 not provided. Falling back to standard schedule.")
+
+    t_obj_int = None     # timestep at which inversion stopped (object anchor)
+    t_bg_int = None      # denoising start timestep (background SDEdit level)
+    t_obj_denoising_idx = None  # index in timestep_ints for t_obj
+    asym_start_index = None
+
+    if do_asym:
+        n_obj = max(1, min(int(round(obj_start_frac * num_inference_steps)), num_inference_steps - 1))
+        n_bg  = max(n_obj + 1, min(int(round(bg_start_frac * num_inference_steps)), num_inference_steps))
+
+        # In the denoising direction, timestep_ints goes from high→low.
+        # The n-th inversion step corresponds to index (num_inference_steps - n) in denoising.
+        t_obj_denoising_idx = num_inference_steps - n_obj   # index where t ≈ t_obj
+        asym_start_index    = num_inference_steps - n_bg    # index where t ≈ t_bg (denoising start)
+
+        # clamp to valid range
+        t_obj_denoising_idx = max(0, min(t_obj_denoising_idx, num_inference_steps - 1))
+        asym_start_index    = max(0, min(asym_start_index, t_obj_denoising_idx - 1))
+
+        t_obj_int = timestep_ints[t_obj_denoising_idx]
+        t_bg_int  = timestep_ints[asym_start_index]
+
+        start_index = asym_start_index
+        print(f"[ASYM] n_obj={n_obj}  n_bg={n_bg}  t_obj={t_obj_int}  t_bg={t_bg_int}  start_index={start_index}")
+
     latents = latents_all[-1][1].to(device=device, dtype=dtype).clone()
     latent_spatial = (latents.shape[-2], latents.shape[-1])
 
@@ -227,8 +265,52 @@ def reconstruct_ddim_with_attention_restoration(
         if want_transmission and not have_inv_attention and not have_sam:
             print("[WARN] Transmission requested but no attention maps and no SAM predictor. Disabling.")
 
-    # ── initial noise injection ───────────────────────────────────────────────
-    if use_inversion_attention_transmission and need_base_mask and initial_noise_beta > 0.0:
+    # ── initial latent: asymmetric z_init or standard noise injection ─────────
+    # These are kept alive for per-step bg reference in the SDEdit phase loop.
+    _z0_for_bg: torch.Tensor | None = None
+    _eps_for_bg: torch.Tensor | None = None
+    _alphas_cumprod_dev: torch.Tensor | None = None
+
+    if do_asym:
+        # Compose initial latent at t_bg from two branches using the inversion mask.
+        # Object region: forward-noise z_inv(t_obj) → t_bg.
+        # Background region: forward-noise z_0 → t_bg (SDEdit-style).
+        # Both branches share the same Gaussian noise for boundary consistency.
+        z_inv_obj = latents_map[t_obj_int].to(device=device, dtype=dtype) \
+            if t_obj_int in latents_map else latents  # fallback: use current latents
+        z_0_dev = _cast(z0)
+
+        alphas_cumprod = _cast(pipe.scheduler.alphas_cumprod)
+        alpha_bar_bg  = alphas_cumprod[t_bg_int]
+        alpha_bar_obj = alphas_cumprod[t_obj_int]
+
+        eps = torch.randn_like(z_0_dev)
+
+        # background: q(z_{t_bg} | z_0)
+        z_bg_noised = alpha_bar_bg.sqrt() * z_0_dev + (1.0 - alpha_bar_bg).sqrt() * eps
+
+        # object: q(z_{t_bg} | z_{t_obj})  via the DDPM re-noising formula
+        ratio = (alpha_bar_bg / alpha_bar_obj.clamp(min=1e-8)).clamp(max=1.0)
+        z_obj_noised = ratio.sqrt() * z_inv_obj + (1.0 - ratio).clamp(min=0).sqrt() * eps
+
+        # compose: inside M_inv → protected object, outside → free background
+        M_inv_bc = main_mask.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1]).clamp(0, 1)
+        latents = M_inv_bc * z_obj_noised + (1.0 - M_inv_bc) * z_bg_noised
+
+        # keep z_0 and eps alive so the loop can reconstruct q(z_t | z_0) at any t
+        _z0_for_bg = z_0_dev
+        _eps_for_bg = eps
+        _alphas_cumprod_dev = alphas_cumprod
+
+        if debug_dir is not None:
+            # always save z_init regardless of save_debug_latents — it's a one-time sanity check
+            try:
+                img = decode_latents_to_pil(pipe, latents.to(device=device, dtype=dtype))
+                img.save(os.path.join(debug_dir, "z_init_asymmetric.png"))
+            except Exception as e:
+                print(f"[WARN] Could not save z_init preview: {e}")
+
+    elif use_inversion_attention_transmission and need_base_mask and initial_noise_beta > 0.0:
         randn = torch.randn_like(latents)
         latents = main_mask * latents + (1.0 - main_mask) * (
             (1.0 - initial_noise_beta) * latents + initial_noise_beta * randn
@@ -265,7 +347,8 @@ def reconstruct_ddim_with_attention_restoration(
 
     prompt_embeds_generic = None
     if token_replace_frac > 0.0 and tokens and prompt:
-        replaced_prompt = _replace_tokens_in_prompt(prompt, tokens, token_replace_generic)
+        replace_targets = [concept_template] if concept_template else tokens
+        replaced_prompt = _replace_tokens_in_prompt(prompt, replace_targets, token_replace_generic)
         if replaced_prompt != prompt:
             print(f"[TOKEN_REPLACE] frac={token_replace_frac}  prompt: {prompt!r} → {replaced_prompt!r}")
             prompt_embeds_generic = _cast(encode_prompt_cfg(pipe, replaced_prompt, guidance_scale=guidance_scale))
@@ -282,7 +365,21 @@ def reconstruct_ddim_with_attention_restoration(
             if lat_orig is not None:
                 lat_orig = lat_orig.to(device=device, dtype=dtype)
 
-            need_lat_orig = transmission_alpha > 0.0 and (
+            # In the asymmetric SDEdit phase (t > t_obj), we don't use inversion latents.
+            in_sdedit_phase = do_asym and (t_int > t_obj_int)
+
+            # Background reference at current t: q(z_t | z_0) using the same eps as z_init.
+            # Used as the Stage-2 merge target during the SDEdit phase so that reconstruction
+            # attention can still suppress concept leakage into the background.
+            z_bg_at_t = None
+            if in_sdedit_phase and _z0_for_bg is not None:
+                ab_t = _alphas_cumprod_dev[t_int]
+                z_bg_at_t = ab_t.sqrt() * _z0_for_bg + (1.0 - ab_t).sqrt() * _eps_for_bg
+
+            # Stage-2 merge target: inversion latent in transmission phase, bg reference in SDEdit phase.
+            lat_for_stage2 = z_bg_at_t if in_sdedit_phase else lat_orig
+
+            need_lat_orig = (not in_sdedit_phase) and transmission_alpha > 0.0 and (
                 use_inversion_attention_transmission or use_reconstruction_attention_transmission
             )
             if need_lat_orig and lat_orig is None:
@@ -298,7 +395,14 @@ def reconstruct_ddim_with_attention_restoration(
                 t_frac = max(0.0, 1.0 - (progress - alpha_decay_start) / max(1.0 - alpha_decay_start, 1e-8))
                 alpha_t = transmission_alpha_end + (1.0 - transmission_alpha_end) * t_frac
 
-            use_stage1 = use_inversion_attention_transmission and need_base_mask and transmission_alpha > 0.0
+            # Linear ramp on alpha_t at the t_obj boundary to avoid a seam.
+            if do_asym and not in_sdedit_phase and transmission_ramp_steps > 0 and t_obj_denoising_idx is not None:
+                steps_into_tx = step_index - t_obj_denoising_idx
+                if steps_into_tx < transmission_ramp_steps:
+                    ramp = (steps_into_tx + 1) / float(transmission_ramp_steps)
+                    alpha_t = alpha_t * ramp
+
+            use_stage1 = (not in_sdedit_phase) and use_inversion_attention_transmission and need_base_mask and transmission_alpha > 0.0
 
             if use_stage1:
                 M = (transmission_alpha * alpha_t * mask).clamp(0, 1)
@@ -368,12 +472,12 @@ def reconstruct_ddim_with_attention_restoration(
 
             mask2 = torch.zeros_like(mask)
 
-            if use_inversion_attention_transmission and need_base_mask:
+            if (not in_sdedit_phase) and use_inversion_attention_transmission and need_base_mask:
                 mask2 = torch.maximum(mask2, mask * alpha_t)
 
-            if use_reconstruction_attention_transmission and recon_mask_dilated is not None and progress >= recon_attn_start_frac:
+            recon_tx_active = use_reconstruction_attention_transmission and not (recon_attn_sdedit_only and do_asym and not in_sdedit_phase)
+            if recon_tx_active and recon_mask_dilated is not None and progress >= recon_attn_start_frac:
                 if need_base_mask:
-                    
                     mask_gap = dilate_mask(main_mask_bin, radius=transition_gap_radius) if transition_gap_radius > 0 else main_mask_bin
                     recon_ring = (recon_mask_dilated - mask_gap).clamp(0, 1)
                 else:
@@ -386,10 +490,10 @@ def reconstruct_ddim_with_attention_restoration(
 
             latents_before_merge = latents.clone()
 
-            if transmission_alpha > 0.0 and lat_orig is not None and float(mask2.max().item()) > 0.0:
+            if transmission_alpha > 0.0 and lat_for_stage2 is not None and float(mask2.max().item()) > 0.0:
                 Mbc2 = mask2.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1])
                 std_ref2 = latents.detach().float().std(dim=(1, 2, 3), keepdim=True) + 1e-8
-                latents = Mbc2 * lat_orig + (1.0 - Mbc2) * latents
+                latents = Mbc2 * lat_for_stage2 + (1.0 - Mbc2) * latents
                 std_new = latents.detach().float().std(dim=(1, 2, 3), keepdim=True) + 1e-8
                 latents = _cast(latents * (std_ref2 / std_new))
 
@@ -446,6 +550,10 @@ def reconstruct_ddim_with_attention_restoration(
                     f.write(f"initial_noise_beta={initial_noise_beta}\n")
                     f.write(f"recon_dilate_radius={recon_dilate_radius}\n")
                     f.write(f"transition_gap_radius={transition_gap_radius}\n")
+                    f.write(f"asymmetric_schedule={do_asym}\n")
+                    if do_asym:
+                        f.write(f"in_sdedit_phase={in_sdedit_phase}\n")
+                        f.write(f"t_obj={t_obj_int}  t_bg={t_bg_int}\n")
 
     finally:
         restore_attention_processors(pipe, saved_attn_processors)
