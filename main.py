@@ -164,6 +164,9 @@ def main():
         bg_start_frac=p1.getfloat("bg_start_frac", fallback=0.75),
         transmission_ramp_steps=p1.getint("transmission_ramp_steps", fallback=3),
         recon_attn_sdedit_only=p1.getboolean("recon_attn_sdedit_only", fallback=False),
+        dual_recon_transmission=p1.getboolean("dual_recon_transmission", fallback=False),
+        transmission_source=p1.get("transmission_source", fallback="inversion"),
+        init_latent=p1.get("init_latent", fallback="composed"),
 
         # pass 2
         second_pass_polish=p2.getboolean("enabled"),

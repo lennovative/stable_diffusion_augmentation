@@ -85,6 +85,9 @@ def run_batch_inversion_and_editing(
     bg_start_frac: float = 0.75,
     transmission_ramp_steps: int = 3,
     recon_attn_sdedit_only: bool = False,
+    dual_recon_transmission: bool = False,
+    transmission_source: str = "inversion",  # "inversion" | "sdedit"
+    init_latent: str = "composed",           # "composed" (SDEdit z_init) | "inversion" (lat at t_bg)
 
     # pass 2 / polish
     second_pass_polish: bool = True,
@@ -198,8 +201,9 @@ def run_batch_inversion_and_editing(
             source_image = load_image_rgb(str(image_path), size=(input_size, input_size))
             print(f"[INV:PASS1] {image_path.name}  prompt={inv_prompt!r}")
 
-            # With asymmetric schedule, only invert to t_obj (obj_start_frac of steps).
-            effective_invert_frac = obj_start_frac if asymmetric_schedule else invert_frac
+            # With asymmetric schedule, invert to t_bg (bg_start_frac of steps) so that
+            # inversion latents cover the full SDEdit phase and can serve as ring-merge sources.
+            effective_invert_frac = bg_start_frac if asymmetric_schedule else invert_frac
 
             inv = ddim_invert_store(
                 pipe=pipe,
@@ -267,6 +271,9 @@ def run_batch_inversion_and_editing(
                     bg_start_frac=bg_start_frac,
                     transmission_ramp_steps=transmission_ramp_steps,
                     recon_attn_sdedit_only=recon_attn_sdedit_only,
+                    dual_recon_transmission=dual_recon_transmission,
+                    transmission_source=transmission_source,
+                    init_latent=init_latent,
                     z0=inv.get("z0"),
 
                     debug_dir=str(pass1_debug) if pass1_debug else None,

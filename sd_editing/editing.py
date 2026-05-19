@@ -86,6 +86,9 @@ def reconstruct_ddim_with_attention_restoration(
     transmission_ramp_steps=3,
     z0=None,             # clean image latent tensor (required when asymmetric_schedule=True)
     recon_attn_sdedit_only=False,  # if True, disable recon attention transmission once t <= t_obj
+    dual_recon_transmission=False, # run a second UNet pass with generic prompt; blend generic latents where its attention leaks
+    transmission_source="inversion",  # SDEdit phase ring source: "inversion" (lat_orig) | "sdedit" (q(z_t|z_0))
+    init_latent="composed",           # denoising start latent: "composed" (SDEdit z_init) | "inversion" (lat at t_bg)
 
     # debug
     debug_dir=None,
@@ -266,41 +269,39 @@ def reconstruct_ddim_with_attention_restoration(
             print("[WARN] Transmission requested but no attention maps and no SAM predictor. Disabling.")
 
     # ── initial latent: asymmetric z_init or standard noise injection ─────────
-    # These are kept alive for per-step bg reference in the SDEdit phase loop.
     _z0_for_bg: torch.Tensor | None = None
     _eps_for_bg: torch.Tensor | None = None
     _alphas_cumprod_dev: torch.Tensor | None = None
 
     if do_asym:
-        # Compose initial latent at t_bg from two branches using the inversion mask.
-        # Object region: forward-noise z_inv(t_obj) → t_bg.
-        # Background region: forward-noise z_0 → t_bg (SDEdit-style).
-        # Both branches share the same Gaussian noise for boundary consistency.
-        z_inv_obj = latents_map[t_obj_int].to(device=device, dtype=dtype) \
-            if t_obj_int in latents_map else latents  # fallback: use current latents
         z_0_dev = _cast(z0)
-
         alphas_cumprod = _cast(pipe.scheduler.alphas_cumprod)
         alpha_bar_bg  = alphas_cumprod[t_bg_int]
         alpha_bar_obj = alphas_cumprod[t_obj_int]
-
         eps = torch.randn_like(z_0_dev)
 
-        # background: q(z_{t_bg} | z_0)
-        z_bg_noised = alpha_bar_bg.sqrt() * z_0_dev + (1.0 - alpha_bar_bg).sqrt() * eps
+        if init_latent == "inversion":
+            # Use the real DDIM inversion latent at t_bg directly.
+            latents = latents_map[t_bg_int].to(device=device, dtype=dtype) \
+                if t_bg_int in latents_map else latents
+            print(f"[ASYM] init_latent=inversion  using lat at t_bg={t_bg_int}")
+        else:
+            # Compose z_init from two branches sharing the same noise sample.
+            # Object region: forward-noise z_inv(t_obj) → t_bg via DDPM re-noising.
+            # Background region: SDEdit forward-noise z_0 → t_bg.
+            z_inv_obj = latents_map[t_obj_int].to(device=device, dtype=dtype) \
+                if t_obj_int in latents_map else latents
+            z_bg_noised = alpha_bar_bg.sqrt() * z_0_dev + (1.0 - alpha_bar_bg).sqrt() * eps
+            ratio = (alpha_bar_bg / alpha_bar_obj.clamp(min=1e-8)).clamp(max=1.0)
+            z_obj_noised = ratio.sqrt() * z_inv_obj + (1.0 - ratio).clamp(min=0).sqrt() * eps
+            M_inv_bc = main_mask.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1]).clamp(0, 1)
+            latents = M_inv_bc * z_obj_noised + (1.0 - M_inv_bc) * z_bg_noised
 
-        # object: q(z_{t_bg} | z_{t_obj})  via the DDPM re-noising formula
-        ratio = (alpha_bar_bg / alpha_bar_obj.clamp(min=1e-8)).clamp(max=1.0)
-        z_obj_noised = ratio.sqrt() * z_inv_obj + (1.0 - ratio).clamp(min=0).sqrt() * eps
-
-        # compose: inside M_inv → protected object, outside → free background
-        M_inv_bc = main_mask.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1]).clamp(0, 1)
-        latents = M_inv_bc * z_obj_noised + (1.0 - M_inv_bc) * z_bg_noised
-
-        # keep z_0 and eps alive so the loop can reconstruct q(z_t | z_0) at any t
-        _z0_for_bg = z_0_dev
-        _eps_for_bg = eps
-        _alphas_cumprod_dev = alphas_cumprod
+        # keep z_0/eps/alphas alive for per-step q(z_t|z_0) when transmission_source="sdedit"
+        if transmission_source == "sdedit":
+            _z0_for_bg = z_0_dev
+            _eps_for_bg = eps
+            _alphas_cumprod_dev = alphas_cumprod
 
         if debug_dir is not None:
             # always save z_init regardless of save_debug_latents — it's a one-time sanity check
@@ -346,14 +347,17 @@ def reconstruct_ddim_with_attention_restoration(
     prompt_embeds = _cast(encode_prompt_cfg(pipe, prompt, guidance_scale=guidance_scale))
 
     prompt_embeds_generic = None
-    if token_replace_frac > 0.0 and tokens and prompt:
+    if (token_replace_frac > 0.0 or dual_recon_transmission) and tokens and prompt:
         replace_targets = [concept_template] if concept_template else tokens
         replaced_prompt = _replace_tokens_in_prompt(prompt, replace_targets, token_replace_generic)
         if replaced_prompt != prompt:
-            print(f"[TOKEN_REPLACE] frac={token_replace_frac}  prompt: {prompt!r} → {replaced_prompt!r}")
+            if token_replace_frac > 0.0:
+                print(f"[TOKEN_REPLACE] frac={token_replace_frac}  prompt: {prompt!r} → {replaced_prompt!r}")
+            if dual_recon_transmission:
+                print(f"[DUAL_RECON] generic prompt: {replaced_prompt!r}")
             prompt_embeds_generic = _cast(encode_prompt_cfg(pipe, replaced_prompt, guidance_scale=guidance_scale))
         else:
-            print(f"[TOKEN_REPLACE] No tokens from {tokens} found in prompt {prompt!r}. Feature disabled.")
+            print(f"[TOKEN_REPLACE/DUAL_RECON] No concept template matched in {prompt!r}. Generic embedding disabled.")
 
     try:
         for step_index in range(start_index, num_inference_steps):
@@ -368,16 +372,16 @@ def reconstruct_ddim_with_attention_restoration(
             # In the asymmetric SDEdit phase (t > t_obj), we don't use inversion latents.
             in_sdedit_phase = do_asym and (t_int > t_obj_int)
 
-            # Background reference at current t: q(z_t | z_0) using the same eps as z_init.
-            # Used as the Stage-2 merge target during the SDEdit phase so that reconstruction
-            # attention can still suppress concept leakage into the background.
-            z_bg_at_t = None
-            if in_sdedit_phase and _z0_for_bg is not None:
+            # Stage-2 merge target.
+            # In the SDEdit phase the source is configurable:
+            #   "inversion" — lat_orig from the real DDIM trajectory (inversion to t_bg)
+            #   "sdedit"    — q(z_t | z_0) = sqrt(αbar_t)*z_0 + sqrt(1-αbar_t)*eps
+            #                 using the same eps as z_init for boundary consistency
+            if in_sdedit_phase and transmission_source == "sdedit" and _z0_for_bg is not None:
                 ab_t = _alphas_cumprod_dev[t_int]
-                z_bg_at_t = ab_t.sqrt() * _z0_for_bg + (1.0 - ab_t).sqrt() * _eps_for_bg
-
-            # Stage-2 merge target: inversion latent in transmission phase, bg reference in SDEdit phase.
-            lat_for_stage2 = z_bg_at_t if in_sdedit_phase else lat_orig
+                lat_for_stage2 = ab_t.sqrt() * _z0_for_bg + (1.0 - ab_t).sqrt() * _eps_for_bg
+            else:
+                lat_for_stage2 = lat_orig
 
             need_lat_orig = (not in_sdedit_phase) and transmission_alpha > 0.0 and (
                 use_inversion_attention_transmission or use_reconstruction_attention_transmission
@@ -424,18 +428,27 @@ def reconstruct_ddim_with_attention_restoration(
             latent_input = lat_for_unet if guidance_scale <= 1.0 else torch.cat([lat_for_unet, lat_for_unet], dim=0)
             latent_input = _cast(pipe.scheduler.scale_model_input(latent_input, t))
 
-            active_embeds = (
-                prompt_embeds_generic
-                if prompt_embeds_generic is not None and progress < token_replace_frac
-                else prompt_embeds
-            )
+            # When dual_recon_transmission is on, normal pass always uses the full prompt;
+            # token_replace_frac is only applied when running without the separate generic pass.
+            if dual_recon_transmission:
+                active_embeds = prompt_embeds
+            else:
+                active_embeds = (
+                    prompt_embeds_generic
+                    if prompt_embeds_generic is not None and progress < token_replace_frac
+                    else prompt_embeds
+                )
             noise_pred = _cast(pipe.unet(latent_input, t, encoder_hidden_states=active_embeds, return_dict=False)[0])
 
             if guidance_scale > 1.0:
                 eps_u, eps_c = noise_pred.chunk(2)
                 noise_pred = _cast(eps_u + guidance_scale * (eps_c - eps_u))
 
-            latents = pipe.scheduler.step(noise_pred, t, latents, eta=eta, return_dict=True).prev_sample
+            # Save x_t before the scheduler step so both normal and generic passes
+            # are stepped from the same starting latent.
+            latents_x_t = latents
+
+            latents = pipe.scheduler.step(noise_pred, t, latents_x_t, eta=eta, return_dict=True).prev_sample
             latents = latents.to(device=device, dtype=dtype)
 
             if recorder is not None:
@@ -443,6 +456,26 @@ def reconstruct_ddim_with_attention_restoration(
                 recon_map_raw = recorder.step_maps[-1]
             else:
                 recon_map_raw = None
+
+            # ── generic UNet pass (dual_recon_transmission) ───────────────────
+            # Leakage is detected from the normal pass attention (recon_map_raw).
+            # The generic pass only provides an alternative latent trajectory to
+            # blend in where leakage is found; its own attention is not used.
+            # The recorder begin/end are still called so the hook state stays clean.
+            latents_generic_step = None
+            if dual_recon_transmission and prompt_embeds_generic is not None:
+                if recorder is not None:
+                    recorder.begin_step()
+                latent_input_g = lat_for_unet if guidance_scale <= 1.0 else torch.cat([lat_for_unet, lat_for_unet], dim=0)
+                latent_input_g = _cast(pipe.scheduler.scale_model_input(latent_input_g, t))
+                noise_pred_g = _cast(pipe.unet(latent_input_g, t, encoder_hidden_states=prompt_embeds_generic, return_dict=False)[0])
+                if guidance_scale > 1.0:
+                    eps_u_g, eps_c_g = noise_pred_g.chunk(2)
+                    noise_pred_g = _cast(eps_u_g + guidance_scale * (eps_c_g - eps_u_g))
+                latents_generic_step = pipe.scheduler.step(noise_pred_g, t, latents_x_t, eta=eta, return_dict=True).prev_sample
+                latents_generic_step = latents_generic_step.to(device=device, dtype=dtype)
+                if recorder is not None:
+                    recorder.end_step()  # discard generic attention — not used
 
             # ── stage 2: post-step merge ──────────────────────────────────────
             recon_mask_base = recon_mask_bin = recon_mask_dilated = recon_ring = recon_otsu_thr = None
@@ -470,10 +503,13 @@ def reconstruct_ddim_with_attention_restoration(
                 if recon_blur_k and recon_blur_k > 1:
                     recon_mask_dilated = _cast(avg_pool_blur(recon_mask_dilated, k=_ensure_odd(recon_blur_k)))
 
-            mask2 = torch.zeros_like(mask)
+            # Build the two stage-2 component masks separately so they can be
+            # applied to different latent sources.
+            mask2_inv   = torch.zeros_like(mask)  # object protection → lat_for_stage2
+            mask2_recon = torch.zeros_like(mask)  # leakage ring → generic latent (or lat_for_stage2)
 
             if (not in_sdedit_phase) and use_inversion_attention_transmission and need_base_mask:
-                mask2 = torch.maximum(mask2, mask * alpha_t)
+                mask2_inv = (mask * alpha_t).clamp(0, 1)
 
             recon_tx_active = use_reconstruction_attention_transmission and not (recon_attn_sdedit_only and do_asym and not in_sdedit_phase)
             if recon_tx_active and recon_mask_dilated is not None and progress >= recon_attn_start_frac:
@@ -482,18 +518,39 @@ def reconstruct_ddim_with_attention_restoration(
                     recon_ring = (recon_mask_dilated - mask_gap).clamp(0, 1)
                 else:
                     recon_ring = recon_mask_dilated.clamp(0, 1)
-                mask2 = torch.maximum(mask2, recon_ring * (alpha_t if recon_alpha_decay else 1.0))
+                mask2_recon = (recon_ring * (alpha_t if recon_alpha_decay else 1.0)).clamp(0, 1)
 
-            mask2 = _cast((transmission_alpha * mask2).clamp(0, 1))
-            if mask2.shape[-2:] != latent_spatial:
-                mask2 = _cast(F.interpolate(mask2, size=latent_spatial, mode="nearest"))
+            mask2_inv   = _cast((transmission_alpha * mask2_inv).clamp(0, 1))
+            mask2_recon = _cast((transmission_alpha * mask2_recon).clamp(0, 1))
+            mask2 = torch.maximum(mask2_inv, mask2_recon)  # combined — for debug output only
+
+            if mask2_inv.shape[-2:] != latent_spatial:
+                mask2_inv = _cast(F.interpolate(mask2_inv, size=latent_spatial, mode="nearest"))
+            if mask2_recon.shape[-2:] != latent_spatial:
+                mask2_recon = _cast(F.interpolate(mask2_recon, size=latent_spatial, mode="nearest"))
 
             latents_before_merge = latents.clone()
 
-            if transmission_alpha > 0.0 and lat_for_stage2 is not None and float(mask2.max().item()) > 0.0:
-                Mbc2 = mask2.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1])
+            # Inversion component: protect the object region using the inversion/bg latent.
+            if transmission_alpha > 0.0 and lat_for_stage2 is not None and float(mask2_inv.max().item()) > 0.0:
+                Mbc2_inv = mask2_inv.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1])
                 std_ref2 = latents.detach().float().std(dim=(1, 2, 3), keepdim=True) + 1e-8
-                latents = Mbc2 * lat_for_stage2 + (1.0 - Mbc2) * latents
+                latents = Mbc2_inv * lat_for_stage2 + (1.0 - Mbc2_inv) * latents
+                std_new = latents.detach().float().std(dim=(1, 2, 3), keepdim=True) + 1e-8
+                latents = _cast(latents * (std_ref2 / std_new))
+
+            # Recon ring: suppress leakage detected by the normal-prompt attention.
+            # When dual_recon_transmission is on, blend generic latents into the ring
+            # instead of the inversion latent, since the generic trajectory was driven
+            # without concept-specific embeddings at those positions.
+            recon_ring_source = (
+                latents_generic_step if (dual_recon_transmission and latents_generic_step is not None)
+                else lat_for_stage2
+            )
+            if transmission_alpha > 0.0 and recon_ring_source is not None and float(mask2_recon.max().item()) > 0.0:
+                Mbc2_recon = mask2_recon.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1])
+                std_ref2 = latents.detach().float().std(dim=(1, 2, 3), keepdim=True) + 1e-8
+                latents = Mbc2_recon * recon_ring_source + (1.0 - Mbc2_recon) * latents
                 std_new = latents.detach().float().std(dim=(1, 2, 3), keepdim=True) + 1e-8
                 latents = _cast(latents * (std_ref2 / std_new))
 
