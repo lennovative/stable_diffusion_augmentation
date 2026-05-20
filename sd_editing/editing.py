@@ -85,10 +85,11 @@ def reconstruct_ddim_with_attention_restoration(
     bg_start_frac=0.75,
     transmission_ramp_steps=3,
     z0=None,             # clean image latent tensor (required when asymmetric_schedule=True)
-    recon_attn_sdedit_only=False,  # if True, disable recon attention transmission once t <= t_obj
+    recon_attn_end_frac=1.0,       # stop recon attention transmission after this fraction of denoising steps
     dual_recon_transmission=False, # run a second UNet pass with generic prompt; blend generic latents where its attention leaks
-    transmission_source="inversion",  # SDEdit phase ring source: "inversion" (lat_orig) | "sdedit" (q(z_t|z_0))
+    transmission_source="inversion",  # ring source: "inversion" (lat_orig) | "noise" (q(z_t|z_0_bg), colour-neutral, active full run)
     init_latent="composed",           # denoising start latent: "composed" (SDEdit z_init) | "inversion" (lat at t_bg)
+    z0_sdedit=None,                   # preprocessed z0 for SDEdit background (grayscale/blur); replaces z0 in SDEdit formula
 
     # debug
     debug_dir=None,
@@ -280,6 +281,9 @@ def reconstruct_ddim_with_attention_restoration(
         alpha_bar_obj = alphas_cumprod[t_obj_int]
         eps = torch.randn_like(z_0_dev)
 
+        # Preprocessed z0 for the background SDEdit component (colour-neutral source).
+        z_0_bg = _cast(z0_sdedit) if z0_sdedit is not None else z_0_dev
+
         if init_latent == "inversion":
             # Use the real DDIM inversion latent at t_bg directly.
             latents = latents_map[t_bg_int].to(device=device, dtype=dtype) \
@@ -288,20 +292,26 @@ def reconstruct_ddim_with_attention_restoration(
         else:
             # Compose z_init from two branches sharing the same noise sample.
             # Object region: forward-noise z_inv(t_obj) → t_bg via DDPM re-noising.
-            # Background region: SDEdit forward-noise z_0 → t_bg.
+            # Background region: SDEdit forward-noise z_0_bg → t_bg.
             z_inv_obj = latents_map[t_obj_int].to(device=device, dtype=dtype) \
                 if t_obj_int in latents_map else latents
-            z_bg_noised = alpha_bar_bg.sqrt() * z_0_dev + (1.0 - alpha_bar_bg).sqrt() * eps
+            z_bg_noised = alpha_bar_bg.sqrt() * z_0_bg + (1.0 - alpha_bar_bg).sqrt() * eps
             ratio = (alpha_bar_bg / alpha_bar_obj.clamp(min=1e-8)).clamp(max=1.0)
             z_obj_noised = ratio.sqrt() * z_inv_obj + (1.0 - ratio).clamp(min=0).sqrt() * eps
             M_inv_bc = main_mask.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1]).clamp(0, 1)
             latents = M_inv_bc * z_obj_noised + (1.0 - M_inv_bc) * z_bg_noised
 
-        # keep z_0/eps/alphas alive for per-step q(z_t|z_0) when transmission_source="sdedit"
-        if transmission_source == "sdedit":
-            _z0_for_bg = z_0_dev
+        # keep z_0_bg/eps/alphas alive for per-step q(z_t|z_0) when transmission_source="noise"
+        if transmission_source == "noise":
+            _z0_for_bg = z_0_bg
             _eps_for_bg = eps
             _alphas_cumprod_dev = alphas_cumprod
+
+        if need_base_mask and initial_noise_beta > 0.0:
+            bg_randn = torch.randn_like(latents)
+            M_bg = (1.0 - main_mask).clamp(0, 1)
+            scale = (1.0 - initial_noise_beta ** 2) ** 0.5
+            latents = (1.0 - M_bg) * latents + M_bg * (scale * latents + initial_noise_beta * bg_randn)
 
         if debug_dir is not None:
             # always save z_init regardless of save_debug_latents — it's a one-time sanity check
@@ -313,9 +323,8 @@ def reconstruct_ddim_with_attention_restoration(
 
     elif use_inversion_attention_transmission and need_base_mask and initial_noise_beta > 0.0:
         randn = torch.randn_like(latents)
-        latents = main_mask * latents + (1.0 - main_mask) * (
-            (1.0 - initial_noise_beta) * latents + initial_noise_beta * randn
-        )
+        scale = (1.0 - initial_noise_beta ** 2) ** 0.5
+        latents = main_mask * latents + (1.0 - main_mask) * (scale * latents + initial_noise_beta * randn)
 
     # ── reconstruction attention recorder ────────────────────────────────────
     recorder = None
@@ -372,19 +381,20 @@ def reconstruct_ddim_with_attention_restoration(
             # In the asymmetric SDEdit phase (t > t_obj), we don't use inversion latents.
             in_sdedit_phase = do_asym and (t_int > t_obj_int)
 
-            # Stage-2 merge target.
-            # In the SDEdit phase the source is configurable:
-            #   "inversion" — lat_orig from the real DDIM trajectory (inversion to t_bg)
-            #   "sdedit"    — q(z_t | z_0) = sqrt(αbar_t)*z_0 + sqrt(1-αbar_t)*eps
-            #                 using the same eps as z_init for boundary consistency
-            if in_sdedit_phase and transmission_source == "sdedit" and _z0_for_bg is not None:
+            # Object anchor always uses the real inversion latent.
+            lat_obj_source = lat_orig
+
+            # Ring source: colour-neutral noise formula for the entire run when
+            # transmission_source="noise", so background positions are never
+            # anchored to source colours regardless of phase.
+            if transmission_source == "noise" and _z0_for_bg is not None:
                 ab_t = _alphas_cumprod_dev[t_int]
-                lat_for_stage2 = ab_t.sqrt() * _z0_for_bg + (1.0 - ab_t).sqrt() * _eps_for_bg
+                lat_ring_source = ab_t.sqrt() * _z0_for_bg + (1.0 - ab_t).sqrt() * _eps_for_bg
             else:
-                lat_for_stage2 = lat_orig
+                lat_ring_source = lat_orig
 
             need_lat_orig = (not in_sdedit_phase) and transmission_alpha > 0.0 and (
-                use_inversion_attention_transmission or use_reconstruction_attention_transmission
+                use_inversion_attention_transmission and need_base_mask
             )
             if need_lat_orig and lat_orig is None:
                 raise KeyError(f"Missing inversion latent for timestep {t_int}")
@@ -399,17 +409,19 @@ def reconstruct_ddim_with_attention_restoration(
                 t_frac = max(0.0, 1.0 - (progress - alpha_decay_start) / max(1.0 - alpha_decay_start, 1e-8))
                 alpha_t = transmission_alpha_end + (1.0 - transmission_alpha_end) * t_frac
 
-            # Linear ramp on alpha_t at the t_obj boundary to avoid a seam.
+            # Linear ramp at the t_obj boundary — kept separate from alpha_t so the
+            # decay curve stays monotonic and alpha_t logs the pure decay value.
+            ramp_factor = 1.0
             if do_asym and not in_sdedit_phase and transmission_ramp_steps > 0 and t_obj_denoising_idx is not None:
                 steps_into_tx = step_index - t_obj_denoising_idx
                 if steps_into_tx < transmission_ramp_steps:
-                    ramp = (steps_into_tx + 1) / float(transmission_ramp_steps)
-                    alpha_t = alpha_t * ramp
+                    ramp_factor = (steps_into_tx + 1) / float(transmission_ramp_steps)
+            effective_alpha = alpha_t * ramp_factor
 
             use_stage1 = (not in_sdedit_phase) and use_inversion_attention_transmission and need_base_mask and transmission_alpha > 0.0
 
             if use_stage1:
-                M = (transmission_alpha * alpha_t * mask).clamp(0, 1)
+                M = (transmission_alpha * effective_alpha * mask).clamp(0, 1)
                 M = _cast(M)
                 Mbc = M.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1])
                 latents = _cast(latents)
@@ -509,9 +521,9 @@ def reconstruct_ddim_with_attention_restoration(
             mask2_recon = torch.zeros_like(mask)  # leakage ring → generic latent (or lat_for_stage2)
 
             if (not in_sdedit_phase) and use_inversion_attention_transmission and need_base_mask:
-                mask2_inv = (mask * alpha_t).clamp(0, 1)
+                mask2_inv = (mask * effective_alpha).clamp(0, 1)
 
-            recon_tx_active = use_reconstruction_attention_transmission and not (recon_attn_sdedit_only and do_asym and not in_sdedit_phase)
+            recon_tx_active = use_reconstruction_attention_transmission and progress < recon_attn_end_frac
             if recon_tx_active and recon_mask_dilated is not None and progress >= recon_attn_start_frac:
                 if need_base_mask:
                     mask_gap = dilate_mask(main_mask_bin, radius=transition_gap_radius) if transition_gap_radius > 0 else main_mask_bin
@@ -531,21 +543,19 @@ def reconstruct_ddim_with_attention_restoration(
 
             latents_before_merge = latents.clone()
 
-            # Inversion component: protect the object region using the inversion/bg latent.
-            if transmission_alpha > 0.0 and lat_for_stage2 is not None and float(mask2_inv.max().item()) > 0.0:
+            # Inversion component: protect the object region using the real inversion latent.
+            if transmission_alpha > 0.0 and lat_obj_source is not None and float(mask2_inv.max().item()) > 0.0:
                 Mbc2_inv = mask2_inv.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1])
                 std_ref2 = latents.detach().float().std(dim=(1, 2, 3), keepdim=True) + 1e-8
-                latents = Mbc2_inv * lat_for_stage2 + (1.0 - Mbc2_inv) * latents
+                latents = Mbc2_inv * lat_obj_source + (1.0 - Mbc2_inv) * latents
                 std_new = latents.detach().float().std(dim=(1, 2, 3), keepdim=True) + 1e-8
                 latents = _cast(latents * (std_ref2 / std_new))
 
-            # Recon ring: suppress leakage detected by the normal-prompt attention.
-            # When dual_recon_transmission is on, blend generic latents into the ring
-            # instead of the inversion latent, since the generic trajectory was driven
-            # without concept-specific embeddings at those positions.
+            # Recon ring: suppress leakage using the colour-neutral ring source.
+            # When dual_recon_transmission is on, use generic-prompt latents instead.
             recon_ring_source = (
                 latents_generic_step if (dual_recon_transmission and latents_generic_step is not None)
-                else lat_for_stage2
+                else lat_ring_source
             )
             if transmission_alpha > 0.0 and recon_ring_source is not None and float(mask2_recon.max().item()) > 0.0:
                 Mbc2_recon = mask2_recon.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1])
@@ -597,6 +607,8 @@ def reconstruct_ddim_with_attention_restoration(
                 with open(os.path.join(step_dir, "thresholds.txt"), "w") as f:
                     f.write(f"progress={progress:.4f}\n")
                     f.write(f"alpha_t={alpha_t:.4f}\n")
+                    f.write(f"ramp_factor={ramp_factor:.4f}\n")
+                    f.write(f"effective_alpha={effective_alpha:.4f}\n")
                     f.write(f"alpha_decay_start={alpha_decay_start}\n")
                     f.write(f"transmission_alpha_end={transmission_alpha_end}\n")
                     f.write(f"inversion_otsu_threshold={inv_otsu_thr}\n")

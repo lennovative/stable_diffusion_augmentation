@@ -163,10 +163,12 @@ def main():
         obj_start_frac=p1.getfloat("obj_start_frac", fallback=0.4),
         bg_start_frac=p1.getfloat("bg_start_frac", fallback=0.75),
         transmission_ramp_steps=p1.getint("transmission_ramp_steps", fallback=3),
-        recon_attn_sdedit_only=p1.getboolean("recon_attn_sdedit_only", fallback=False),
+        recon_attn_end_frac=p1.getfloat("recon_attn_end_frac", fallback=1.0),
         dual_recon_transmission=p1.getboolean("dual_recon_transmission", fallback=False),
         transmission_source=p1.get("transmission_source", fallback="inversion"),
         init_latent=p1.get("init_latent", fallback="composed"),
+        sdedit_bg_preprocess=p1.get("sdedit_bg_preprocess", fallback="none"),
+        sdedit_bg_blur_radius=p1.getfloat("sdedit_bg_blur_radius", fallback=3.0),
 
         # pass 2
         second_pass_polish=p2.getboolean("enabled"),

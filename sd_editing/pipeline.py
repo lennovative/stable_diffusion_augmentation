@@ -58,6 +58,19 @@ def load_image_rgb(path, size=(512, 512)):
     return Image.open(path).convert("RGB").resize(size, Image.Resampling.LANCZOS)
 
 
+def preprocess_image_for_sdedit(image: Image.Image, mode: str, blur_radius: float = 3) -> Image.Image:
+    """
+    Neutralise source image colours before SDEdit ring-merge encoding.
+    mode: "none" | "grayscale" | "grayscale_blur"
+    """
+    from PIL import ImageFilter, ImageOps
+    if "blur" in mode:
+        image = image.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+    if "grayscale" in mode:
+        image = ImageOps.grayscale(image).convert("RGB")
+    return image
+
+
 @torch.no_grad()
 def encode_image_to_latents(pipe, image):
     image = pipe.image_processor.preprocess(image).to(device=pipe.device, dtype=pipe.vae.dtype)

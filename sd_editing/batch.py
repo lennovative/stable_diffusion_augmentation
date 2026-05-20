@@ -5,7 +5,7 @@ import torch
 
 from .inversion import ddim_invert_store
 from .editing import reconstruct_ddim_with_attention_restoration
-from .pipeline import load_image_rgb
+from .pipeline import load_image_rgb, encode_image_to_latents, preprocess_image_for_sdedit
 
 
 def format_prompt_template(prompt, target_attribute=None):
@@ -84,10 +84,12 @@ def run_batch_inversion_and_editing(
     obj_start_frac: float = 0.4,
     bg_start_frac: float = 0.75,
     transmission_ramp_steps: int = 3,
-    recon_attn_sdedit_only: bool = False,
+    recon_attn_end_frac: float = 1.0,
     dual_recon_transmission: bool = False,
-    transmission_source: str = "inversion",  # "inversion" | "sdedit"
+    transmission_source: str = "inversion",  # "inversion" | "noise"
     init_latent: str = "composed",           # "composed" (SDEdit z_init) | "inversion" (lat at t_bg)
+    sdedit_bg_preprocess: str = "none",      # "none" | "grayscale" | "grayscale_blur"
+    sdedit_bg_blur_radius: float = 3.0,
 
     # pass 2 / polish
     second_pass_polish: bool = True,
@@ -199,6 +201,13 @@ def run_batch_inversion_and_editing(
         for image_path in image_paths:
             stem = _safe_name(image_path.stem)
             source_image = load_image_rgb(str(image_path), size=(input_size, input_size))
+
+            z0_sdedit = None
+            if sdedit_bg_preprocess != "none" and transmission_source == "noise":
+                neutral_image = preprocess_image_for_sdedit(source_image, sdedit_bg_preprocess, sdedit_bg_blur_radius)
+                z0_sdedit = encode_image_to_latents(pipe, neutral_image)
+                print(f"[SDEDIT_PREPROCESS] mode={sdedit_bg_preprocess}  blur_radius={sdedit_bg_blur_radius}")
+
             print(f"[INV:PASS1] {image_path.name}  prompt={inv_prompt!r}")
 
             # With asymmetric schedule, invert to t_bg (bg_start_frac of steps) so that
@@ -270,11 +279,12 @@ def run_batch_inversion_and_editing(
                     obj_start_frac=obj_start_frac,
                     bg_start_frac=bg_start_frac,
                     transmission_ramp_steps=transmission_ramp_steps,
-                    recon_attn_sdedit_only=recon_attn_sdedit_only,
+                    recon_attn_end_frac=recon_attn_end_frac,
                     dual_recon_transmission=dual_recon_transmission,
                     transmission_source=transmission_source,
                     init_latent=init_latent,
                     z0=inv.get("z0"),
+                    z0_sdedit=z0_sdedit,
 
                     debug_dir=str(pass1_debug) if pass1_debug else None,
                     save_debug_every=save_debug_every,
