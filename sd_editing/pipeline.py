@@ -19,6 +19,10 @@ def load_sdxl_edit_pipe(
     pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
     pipe.inverse_scheduler = DDIMInverseScheduler.from_config(pipe.scheduler.config)
 
+    # SDXL VAE has force_upcast=True; it produces NaN/black images in fp16.
+    # Keep it in fp32 throughout while the UNet stays in fp16.
+    pipe.vae.to(torch.float32)
+
     pipe.vae.enable_slicing()
     pipe.vae.enable_tiling()
 
@@ -92,9 +96,10 @@ def encode_image_to_latents(pipe, image):
 
 @torch.no_grad()
 def decode_latents_to_pil(pipe, latents):
-    latents = latents / pipe.vae.config.scaling_factor
+    # Cast to VAE dtype (float32) before decode — SDXL VAE is unstable in fp16.
+    latents = latents.to(dtype=pipe.vae.dtype) / pipe.vae.config.scaling_factor
     image = pipe.vae.decode(latents, return_dict=False)[0]
-    return pipe.image_processor.postprocess(image, output_type="pil")[0]
+    return pipe.image_processor.postprocess(image.float(), output_type="pil")[0]
 
 
 @torch.no_grad()
