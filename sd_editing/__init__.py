@@ -1,4 +1,4 @@
-from .pipeline import load_sd15_edit_pipe, load_image_rgb, encode_image_to_latents, decode_latents_to_pil
+from .pipeline import load_sdxl_edit_pipe, load_image_rgb, encode_image_to_latents, decode_latents_to_pil
 from .inversion import ddim_invert_store
 from .editing import reconstruct_ddim_with_attention_restoration
 from .batch import run_batch_inversion_and_editing

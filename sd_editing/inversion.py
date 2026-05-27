@@ -20,8 +20,8 @@ def ddim_invert_store(
     num_inference_steps=50,
     invert_frac=1.0,
     guidance_scale=1.0,
-    input_size=512,
-    attention_res=32,
+    input_size=1024,
+    attention_res=64,
     allowed_places=("mid",),
     capture_attention=True,
     allow_missing_token=True,
@@ -60,7 +60,12 @@ def ddim_invert_store(
 
     latents = encode_image_to_latents(pipe, image).to(device=device, dtype=dtype)
     z0 = latents.detach().cpu().clone()
-    prompt_embeds = encode_prompt_cfg(pipe, prompt, guidance_scale=guidance_scale).to(device=device, dtype=dtype)
+
+    prompt_embeds, added_cond_kwargs = encode_prompt_cfg(
+        pipe, prompt, guidance_scale=guidance_scale, image_size=(input_size, input_size)
+    )
+    prompt_embeds = prompt_embeds.to(device=device, dtype=dtype)
+    added_cond_kwargs = {k: v.to(device=device, dtype=dtype) for k, v in added_cond_kwargs.items()}
 
     if isinstance(tokens, str):
         tokens = [tokens]
@@ -110,6 +115,7 @@ def ddim_invert_store(
                 latent_input,
                 t,
                 encoder_hidden_states=prompt_embeds,
+                added_cond_kwargs=added_cond_kwargs,
                 return_dict=False,
             )[0]
 

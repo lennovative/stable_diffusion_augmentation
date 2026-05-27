@@ -1,5 +1,5 @@
 """
-SD 1.5 attention-guided image editing.
+SDXL attention-guided image editing.
 
 Usage:
     python main.py --base-dir <dir> --output-dir <dir> --concepts <file> --prompts <file>
@@ -13,7 +13,7 @@ from pathlib import Path
 import torch
 from diffusers import DDIMScheduler, DDIMInverseScheduler
 
-from sd_editing import load_sd15_edit_pipe, run_batch_inversion_and_editing
+from sd_editing import load_sdxl_edit_pipe, run_batch_inversion_and_editing
 from sd_editing.sam_mask import load_grounded_sam
 
 
@@ -77,7 +77,7 @@ def load_prompts(path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="SD 1.5 attention-guided image editing")
+    parser = argparse.ArgumentParser(description="SDXL attention-guided image editing")
     parser.add_argument("config", nargs="?", default="config.ini")
     parser.add_argument("--base-dir", required=True)
     parser.add_argument("--output-dir", required=True)
@@ -92,7 +92,7 @@ def main():
     p1 = cfg["pass1"]
     p2 = cfg["pass2"]
 
-    pipe, _ = load_sd15_edit_pipe(
+    pipe, _ = load_sdxl_edit_pipe(
         model_name=cfg["model"]["name"],
         device=cfg["model"]["device"],
         dtype=torch.float16,

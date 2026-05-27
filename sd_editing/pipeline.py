@@ -1,19 +1,18 @@
 import os
 import torch
 from PIL import Image
-from diffusers import StableDiffusionImg2ImgPipeline, DDIMScheduler, DDIMInverseScheduler
+from diffusers import StableDiffusionXLImg2ImgPipeline, DDIMScheduler, DDIMInverseScheduler
 
 
-def load_sd15_edit_pipe(
+def load_sdxl_edit_pipe(
     model_name,
     device="cuda",
     dtype=torch.float16,
     custom_embed_path=None,
     use_xformers=True,
 ):
-    pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
+    pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
         model_name,
-        safety_checker=None,
         torch_dtype=dtype,
     ).to(device)
 
@@ -34,27 +33,39 @@ def load_sd15_edit_pipe(
 
     if custom_embed_path is not None and os.path.isfile(custom_embed_path):
         embed_data = torch.load(custom_embed_path, map_location="cpu")
-        tokenizer = pipe.tokenizer
-        text_encoder = pipe.text_encoder
-
-        for token_name, custom_embedding in embed_data.items():
-            num_added = tokenizer.add_tokens([token_name])
-            if num_added == 0:
-                print(f"Token '{token_name}' already exists.")
-            else:
-                print(f"Added custom token '{token_name}'.")
-                text_encoder.resize_token_embeddings(len(tokenizer))
-                token_id = tokenizer.convert_tokens_to_ids(token_name)
-                text_encoder.get_input_embeddings().weight.data[token_id] = custom_embedding.to(
-                    device=text_encoder.device,
-                    dtype=text_encoder.dtype,
-                )
-                num_added_total += 1
+        # SDXL has two tokenizers/text-encoders; add custom tokens to both.
+        for tokenizer, text_encoder in [
+            (pipe.tokenizer, pipe.text_encoder),
+            (pipe.tokenizer_2, pipe.text_encoder_2),
+        ]:
+            for token_name, custom_embedding in embed_data.items():
+                num_added = tokenizer.add_tokens([token_name])
+                if num_added == 0:
+                    print(f"Token '{token_name}' already exists in {tokenizer.__class__.__name__}.")
+                else:
+                    print(f"Added custom token '{token_name}' to {tokenizer.__class__.__name__}.")
+                    text_encoder.resize_token_embeddings(len(tokenizer))
+                    token_id = tokenizer.convert_tokens_to_ids(token_name)
+                    emb = custom_embedding
+                    # Resize embedding if the two encoders have different hidden dims.
+                    target_dim = text_encoder.get_input_embeddings().weight.shape[1]
+                    if emb.shape[-1] != target_dim:
+                        emb = torch.nn.functional.interpolate(
+                            emb.float().reshape(1, 1, -1),
+                            size=target_dim,
+                            mode="linear",
+                            align_corners=False,
+                        ).reshape(-1).to(emb.dtype)
+                    text_encoder.get_input_embeddings().weight.data[token_id] = emb.to(
+                        device=text_encoder.device,
+                        dtype=text_encoder.dtype,
+                    )
+                    num_added_total += 1
 
     return pipe, num_added_total
 
 
-def load_image_rgb(path, size=(512, 512)):
+def load_image_rgb(path, size=(1024, 1024)):
     return Image.open(path).convert("RGB").resize(size, Image.Resampling.LANCZOS)
 
 
@@ -87,15 +98,42 @@ def decode_latents_to_pil(pipe, latents):
 
 
 @torch.no_grad()
-def encode_prompt_cfg(pipe, prompt, guidance_scale=7.5, negative_prompt=""):
+def encode_prompt_cfg(pipe, prompt, guidance_scale=7.5, negative_prompt="", image_size=(1024, 1024)):
+    """
+    Encode a prompt for SDXL.
+
+    Returns:
+        prompt_embeds     : (2*B, seq, hidden) when do_cfg else (B, seq, hidden)
+        added_cond_kwargs : dict with "text_embeds" and "time_ids" required by the SDXL UNet
+    """
     do_cfg = guidance_scale > 1.0
-    prompt_embeds, negative_prompt_embeds = pipe.encode_prompt(
+    (
+        prompt_embeds,
+        negative_prompt_embeds,
+        pooled_prompt_embeds,
+        negative_pooled_prompt_embeds,
+    ) = pipe.encode_prompt(
         prompt=prompt,
+        prompt_2=None,
         device=pipe.device,
         num_images_per_prompt=1,
         do_classifier_free_guidance=do_cfg,
-        negative_prompt=negative_prompt,
+        negative_prompt=negative_prompt if do_cfg else None,
+        negative_prompt_2=None,
     )
+
     if do_cfg:
-        return torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
-    return prompt_embeds
+        prompt_embeds_out = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
+        pooled_out = torch.cat([negative_pooled_prompt_embeds, pooled_prompt_embeds], dim=0)
+    else:
+        prompt_embeds_out = prompt_embeds
+        pooled_out = pooled_prompt_embeds
+
+    h, w = image_size
+    # time_ids encodes: original_height, original_width, crop_top, crop_left, target_height, target_width
+    time_ids = torch.tensor([[h, w, 0, 0, h, w]], dtype=prompt_embeds.dtype, device=pipe.device)
+    if do_cfg:
+        time_ids = time_ids.repeat(2, 1)
+
+    added_cond_kwargs = {"text_embeds": pooled_out, "time_ids": time_ids}
+    return prompt_embeds_out, added_cond_kwargs

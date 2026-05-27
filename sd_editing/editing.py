@@ -49,8 +49,8 @@ def reconstruct_ddim_with_attention_restoration(
     guidance_scale=7.5,
     num_inference_steps=50,
     start_from_step=None,
-    input_size=512,
-    attention_res=32,
+    input_size=1024,
+    attention_res=64,
     allowed_places=("mid",),
     base_mask_step_range=(0.0, 0.5),
     invert_mask=False,
@@ -353,9 +353,14 @@ def reconstruct_ddim_with_attention_restoration(
     if recorder is not None:
         saved_attn_processors = register_attention_recorder(pipe, recorder, allowed_places=allowed_places)
 
-    prompt_embeds = _cast(encode_prompt_cfg(pipe, prompt, guidance_scale=guidance_scale))
+    _raw_embeds, _raw_added = encode_prompt_cfg(
+        pipe, prompt, guidance_scale=guidance_scale, image_size=(input_size, input_size)
+    )
+    prompt_embeds = _cast(_raw_embeds)
+    added_cond_kwargs = {k: _cast(v) for k, v in _raw_added.items()}
 
     prompt_embeds_generic = None
+    added_cond_kwargs_generic = None
     if (token_replace_frac > 0.0 or dual_recon_transmission) and tokens and prompt:
         replace_targets = [concept_template] if concept_template else tokens
         replaced_prompt = _replace_tokens_in_prompt(prompt, replace_targets, token_replace_generic)
@@ -364,7 +369,11 @@ def reconstruct_ddim_with_attention_restoration(
                 print(f"[TOKEN_REPLACE] frac={token_replace_frac}  prompt: {prompt!r} → {replaced_prompt!r}")
             if dual_recon_transmission:
                 print(f"[DUAL_RECON] generic prompt: {replaced_prompt!r}")
-            prompt_embeds_generic = _cast(encode_prompt_cfg(pipe, replaced_prompt, guidance_scale=guidance_scale))
+            _raw_g, _raw_added_g = encode_prompt_cfg(
+                pipe, replaced_prompt, guidance_scale=guidance_scale, image_size=(input_size, input_size)
+            )
+            prompt_embeds_generic = _cast(_raw_g)
+            added_cond_kwargs_generic = {k: _cast(v) for k, v in _raw_added_g.items()}
         else:
             print(f"[TOKEN_REPLACE/DUAL_RECON] No concept template matched in {prompt!r}. Generic embedding disabled.")
 
@@ -442,15 +451,19 @@ def reconstruct_ddim_with_attention_restoration(
 
             # When dual_recon_transmission is on, normal pass always uses the full prompt;
             # token_replace_frac is only applied when running without the separate generic pass.
-            if dual_recon_transmission:
-                active_embeds = prompt_embeds
-            else:
-                active_embeds = (
-                    prompt_embeds_generic
-                    if prompt_embeds_generic is not None and progress < token_replace_frac
-                    else prompt_embeds
-                )
-            noise_pred = _cast(pipe.unet(latent_input, t, encoder_hidden_states=active_embeds, return_dict=False)[0])
+            use_generic = (
+                not dual_recon_transmission
+                and prompt_embeds_generic is not None
+                and progress < token_replace_frac
+            )
+            active_embeds = prompt_embeds_generic if use_generic else prompt_embeds
+            active_added = added_cond_kwargs_generic if use_generic else added_cond_kwargs
+            noise_pred = _cast(pipe.unet(
+                latent_input, t,
+                encoder_hidden_states=active_embeds,
+                added_cond_kwargs=active_added,
+                return_dict=False,
+            )[0])
 
             if guidance_scale > 1.0:
                 eps_u, eps_c = noise_pred.chunk(2)
@@ -480,7 +493,12 @@ def reconstruct_ddim_with_attention_restoration(
                     recorder.begin_step()
                 latent_input_g = lat_for_unet if guidance_scale <= 1.0 else torch.cat([lat_for_unet, lat_for_unet], dim=0)
                 latent_input_g = _cast(pipe.scheduler.scale_model_input(latent_input_g, t))
-                noise_pred_g = _cast(pipe.unet(latent_input_g, t, encoder_hidden_states=prompt_embeds_generic, return_dict=False)[0])
+                noise_pred_g = _cast(pipe.unet(
+                    latent_input_g, t,
+                    encoder_hidden_states=prompt_embeds_generic,
+                    added_cond_kwargs=added_cond_kwargs_generic,
+                    return_dict=False,
+                )[0])
                 if guidance_scale > 1.0:
                     eps_u_g, eps_c_g = noise_pred_g.chunk(2)
                     noise_pred_g = _cast(eps_u_g + guidance_scale * (eps_c_g - eps_u_g))
