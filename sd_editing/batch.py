@@ -78,6 +78,7 @@ def run_batch_inversion_and_editing(
     recon_attn_start_frac: float = 0.0,
     token_replace_frac: float = 0.0,
     token_replace_generic: str = "subject",
+    mask_blur_k: int = 5,
 
     # asymmetric noise schedule
     asymmetric_schedule: bool = False,
@@ -264,6 +265,7 @@ def run_batch_inversion_and_editing(
                     transmission_alpha_end=transmission_alpha_end,
                     initial_noise_beta=initial_noise_beta,
                     recon_dilate_radius=recon_dilate_radius,
+                    recon_blur_k=mask_blur_k,
                     transition_gap_radius=transition_gap_radius,
                     alpha_decay_start=alpha_decay_start,
                     recon_alpha_decay=recon_alpha_decay,
@@ -354,6 +356,7 @@ def run_batch_inversion_and_editing(
                         transmission_alpha_end=polish_transmission_alpha_end,
                         initial_noise_beta=polish_initial_noise_beta,
                         recon_dilate_radius=polish_recon_dilate_radius,
+                        recon_blur_k=mask_blur_k,
                         transition_gap_radius=polish_transition_gap_radius,
                         alpha_decay_start=polish_alpha_decay_start,
                         recon_alpha_decay=polish_recon_alpha_decay,

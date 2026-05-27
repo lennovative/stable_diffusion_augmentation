@@ -247,6 +247,7 @@ def reconstruct_ddim_with_attention_restoration(
                 invert=invert_mask,
                 erode_radius=base_mask_erode_radius,
                 final_dilate_radius=2 if not invert_mask else 0,
+                blur_k=recon_blur_k,
             )
             base_mask_soft = _cast(base_mask_soft)
             main_mask = _cast(main_mask)

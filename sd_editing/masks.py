@@ -108,6 +108,7 @@ def build_base_mask_from_inversion_attn(
     invert=False,
     erode_radius=0,
     final_dilate_radius=None,
+    blur_k=5,
 ):
     valid = [m for m in inv_step_maps if m is not None]
     if len(valid) == 0:
@@ -126,7 +127,8 @@ def build_base_mask_from_inversion_attn(
     base_raw = base_raw / (base_raw.max() + 1e-8)
 
     base_soft = preprocess_mask(base_raw, target_size=target_size, sharpness=12.0, invert=False)
-    base_soft = avg_pool_blur(base_soft, k=5)
+    if blur_k and blur_k > 1:
+        base_soft = avg_pool_blur(base_soft, k=blur_k)
     base_soft = base_soft.clamp(0, 1)
 
     main = keep_largest_component(binary_from_mask(base_soft, 0.5))

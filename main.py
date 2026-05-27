@@ -153,6 +153,7 @@ def main():
         initial_noise_beta=p1.getfloat("initial_noise_beta"),
         base_mask_erode_radius=p1.getint("base_mask_erode_radius"),
         recon_dilate_radius=p1.getint("recon_dilate_radius"),
+        mask_blur_k=g.getint("mask_blur_k", fallback=5),
         transition_gap_radius=p1.getint("transition_gap_radius"),
         alpha_decay_start=p1.getfloat("alpha_decay_start"),
         recon_alpha_decay=p1.getboolean("recon_alpha_decay"),
