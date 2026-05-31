@@ -307,8 +307,8 @@ def reconstruct_ddim_with_attention_restoration(
             M_inv_bc = main_mask.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1]).clamp(0, 1)
             latents = M_inv_bc * z_obj_noised + (1.0 - M_inv_bc) * z_bg_noised
 
-        # keep z_0_bg/eps/alphas alive for per-step q(z_t|z_0) when transmission_source="noise"
-        if transmission_source == "noise":
+        # keep z_0_bg/eps/alphas alive for per-step ring source computation
+        if transmission_source == "noise" or ring_noise_beta > 0.0:
             _z0_for_bg = z_0_bg
             _eps_for_bg = eps
             _alphas_cumprod_dev = alphas_cumprod
@@ -408,11 +408,14 @@ def reconstruct_ddim_with_attention_restoration(
             else:
                 lat_ring_source = lat_orig
 
-            # Spherical noise mixing: dilutes image signal while staying on-manifold.
-            # Fresh noise per step is correct since the latent trajectory evolves each step.
-            if ring_noise_beta > 0.0 and lat_ring_source is not None:
-                scale = (1.0 - ring_noise_beta ** 2) ** 0.5
-                lat_ring_source = scale * lat_ring_source + ring_noise_beta * torch.randn_like(lat_ring_source)
+            # Timestep-aware noise mixing: reduce image signal while keeping noise amplitude
+            # consistent with the current timestep. Noise is scaled by sqrt(1−ᾱ_t) so that
+            # β=1 gives exactly the signal-free latent at step t, not over-noisy pure randn.
+            if ring_noise_beta > 0.0 and lat_ring_source is not None and _alphas_cumprod_dev is not None:
+                ab_t = _alphas_cumprod_dev[t_int]
+                noise_scale = (1.0 - ab_t).sqrt()
+                signal_scale = (1.0 - ring_noise_beta ** 2) ** 0.5
+                lat_ring_source = signal_scale * lat_ring_source + ring_noise_beta * noise_scale * torch.randn_like(lat_ring_source)
 
             need_lat_orig = (not in_sdedit_phase) and transmission_alpha > 0.0 and (
                 use_inversion_attention_transmission and need_base_mask
