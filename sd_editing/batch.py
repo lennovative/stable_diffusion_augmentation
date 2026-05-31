@@ -88,7 +88,7 @@ def run_batch_inversion_and_editing(
     recon_attn_end_frac: float = 1.0,
     dual_recon_transmission: bool = False,
     transmission_source: str = "inversion",  # "inversion" | "noise"
-    init_latent: str = "composed",           # "composed" (SDEdit z_init) | "inversion" (lat at t_bg)
+    init_latent: str = "composed",           # "composed" (SDEdit z_init) | "inversion" (lat at t_bg) | "noise" (pure fresh noise)
     sdedit_bg_preprocess: str = "none",      # "none" | "grayscale" | "grayscale_blur"
     sdedit_bg_blur_radius: float = 3.0,
 

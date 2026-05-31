@@ -88,7 +88,7 @@ def reconstruct_ddim_with_attention_restoration(
     recon_attn_end_frac=1.0,       # stop recon attention transmission after this fraction of denoising steps
     dual_recon_transmission=False, # run a second UNet pass with generic prompt; blend generic latents where its attention leaks
     transmission_source="inversion",  # ring source: "inversion" (lat_orig) | "noise" (q(z_t|z_0_bg), colour-neutral, active full run)
-    init_latent="composed",           # denoising start latent: "composed" (SDEdit z_init) | "inversion" (lat at t_bg)
+    init_latent="composed",           # denoising start latent: "composed" (SDEdit z_init) | "inversion" (lat at t_bg) | "noise" (pure fresh noise)
     z0_sdedit=None,                   # preprocessed z0 for SDEdit background (grayscale/blur); replaces z0 in SDEdit formula
 
     # debug
@@ -285,7 +285,11 @@ def reconstruct_ddim_with_attention_restoration(
         # Preprocessed z0 for the background SDEdit component (colour-neutral source).
         z_0_bg = _cast(z0_sdedit) if z0_sdedit is not None else z_0_dev
 
-        if init_latent == "inversion":
+        if init_latent == "noise":
+            # Pure fresh noise — no inversion anchor at all.
+            latents = eps.clone()
+            print(f"[ASYM] init_latent=noise  pure random noise at t_bg={t_bg_int}")
+        elif init_latent == "inversion":
             # Use the real DDIM inversion latent at t_bg directly.
             latents = latents_map[t_bg_int].to(device=device, dtype=dtype) \
                 if t_bg_int in latents_map else latents
