@@ -87,7 +87,7 @@ def reconstruct_ddim_with_attention_restoration(
     z0=None,             # clean image latent tensor (required when asymmetric_schedule=True)
     recon_attn_end_frac=1.0,       # stop recon attention transmission after this fraction of denoising steps
     dual_recon_transmission=False, # run a second UNet pass with generic prompt; blend generic latents where its attention leaks
-    transmission_source="inversion",  # ring source: "inversion" (lat_orig) | "noise" (q(z_t|z_0_bg), colour-neutral, active full run)
+    transmission_source="inversion",  # ring source: "inversion" (lat_orig) | "noise" (q(z_t|z_0_bg), colour-neutral) | "pure_noise" (frozen ε, zero image signal)
     init_latent="composed",           # denoising start latent: "composed" (SDEdit z_init) | "inversion" (lat at t_bg) | "noise" (pure fresh noise)
     z0_sdedit=None,                   # preprocessed z0 for SDEdit background (grayscale/blur); replaces z0 in SDEdit formula
 
@@ -306,8 +306,8 @@ def reconstruct_ddim_with_attention_restoration(
             M_inv_bc = main_mask.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1]).clamp(0, 1)
             latents = M_inv_bc * z_obj_noised + (1.0 - M_inv_bc) * z_bg_noised
 
-        # keep z_0_bg/eps/alphas alive for per-step q(z_t|z_0) when transmission_source="noise"
-        if transmission_source == "noise":
+        # keep z_0_bg/eps/alphas alive for per-step ring source computation
+        if transmission_source in ("noise", "pure_noise"):
             _z0_for_bg = z_0_bg
             _eps_for_bg = eps
             _alphas_cumprod_dev = alphas_cumprod
@@ -401,7 +401,9 @@ def reconstruct_ddim_with_attention_restoration(
             # Ring source: colour-neutral noise formula for the entire run when
             # transmission_source="noise", so background positions are never
             # anchored to source colours regardless of phase.
-            if transmission_source == "noise" and _z0_for_bg is not None:
+            if transmission_source == "pure_noise" and _eps_for_bg is not None:
+                lat_ring_source = _eps_for_bg
+            elif transmission_source == "noise" and _z0_for_bg is not None:
                 ab_t = _alphas_cumprod_dev[t_int]
                 lat_ring_source = ab_t.sqrt() * _z0_for_bg + (1.0 - ab_t).sqrt() * _eps_for_bg
             else:
