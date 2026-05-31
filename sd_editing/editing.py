@@ -87,7 +87,8 @@ def reconstruct_ddim_with_attention_restoration(
     z0=None,             # clean image latent tensor (required when asymmetric_schedule=True)
     recon_attn_end_frac=1.0,       # stop recon attention transmission after this fraction of denoising steps
     dual_recon_transmission=False, # run a second UNet pass with generic prompt; blend generic latents where its attention leaks
-    transmission_source="inversion",  # ring source: "inversion" (lat_orig) | "noise" (q(z_t|z_0_bg), colour-neutral) | "pure_noise" (frozen ε, zero image signal)
+    transmission_source="inversion",  # ring source: "inversion" (lat_orig) | "noise" (q(z_t|z_0_bg), colour-neutral)
+    ring_noise_beta=0.0,              # spherical mix: lat_ring = √(1−β²)·lat_ring + β·ε_fresh; 0=no mixing, stays on-manifold
     init_latent="composed",           # denoising start latent: "composed" (SDEdit z_init) | "inversion" (lat at t_bg) | "noise" (pure fresh noise)
     z0_sdedit=None,                   # preprocessed z0 for SDEdit background (grayscale/blur); replaces z0 in SDEdit formula
 
@@ -306,8 +307,8 @@ def reconstruct_ddim_with_attention_restoration(
             M_inv_bc = main_mask.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1]).clamp(0, 1)
             latents = M_inv_bc * z_obj_noised + (1.0 - M_inv_bc) * z_bg_noised
 
-        # keep z_0_bg/eps/alphas alive for per-step ring source computation
-        if transmission_source in ("noise", "pure_noise"):
+        # keep z_0_bg/eps/alphas alive for per-step q(z_t|z_0) when transmission_source="noise"
+        if transmission_source == "noise":
             _z0_for_bg = z_0_bg
             _eps_for_bg = eps
             _alphas_cumprod_dev = alphas_cumprod
@@ -401,13 +402,17 @@ def reconstruct_ddim_with_attention_restoration(
             # Ring source: colour-neutral noise formula for the entire run when
             # transmission_source="noise", so background positions are never
             # anchored to source colours regardless of phase.
-            if transmission_source == "pure_noise" and _eps_for_bg is not None:
-                lat_ring_source = _eps_for_bg
-            elif transmission_source == "noise" and _z0_for_bg is not None:
+            if transmission_source == "noise" and _z0_for_bg is not None:
                 ab_t = _alphas_cumprod_dev[t_int]
                 lat_ring_source = ab_t.sqrt() * _z0_for_bg + (1.0 - ab_t).sqrt() * _eps_for_bg
             else:
                 lat_ring_source = lat_orig
+
+            # Spherical noise mixing: dilutes image signal while staying on-manifold.
+            # Fresh noise per step is correct since the latent trajectory evolves each step.
+            if ring_noise_beta > 0.0 and lat_ring_source is not None:
+                scale = (1.0 - ring_noise_beta ** 2) ** 0.5
+                lat_ring_source = scale * lat_ring_source + ring_noise_beta * torch.randn_like(lat_ring_source)
 
             need_lat_orig = (not in_sdedit_phase) and transmission_alpha > 0.0 and (
                 use_inversion_attention_transmission and need_base_mask
