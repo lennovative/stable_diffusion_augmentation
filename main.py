@@ -168,6 +168,8 @@ def main():
         dual_recon_transmission=p1.getboolean("dual_recon_transmission", fallback=False),
         transmission_source=p1.get("transmission_source", fallback="inversion"),
         ring_noise_beta=p1.getfloat("ring_noise_beta", fallback=0.0),
+        border_noise_beta=p1.getfloat("border_noise_beta", fallback=0.0),
+        border_noise_radius=p1.getint("border_noise_radius", fallback=2),
         init_latent=p1.get("init_latent", fallback="composed"),
         sdedit_bg_preprocess=p1.get("sdedit_bg_preprocess", fallback="none"),
         sdedit_bg_blur_radius=p1.getfloat("sdedit_bg_blur_radius", fallback=3.0),

@@ -89,6 +89,8 @@ def reconstruct_ddim_with_attention_restoration(
     dual_recon_transmission=False, # run a second UNet pass with generic prompt; blend generic latents where its attention leaks
     transmission_source="inversion",  # ring source: "inversion" (lat_orig) | "noise" (q(z_t|z_0_bg), colour-neutral)
     ring_noise_beta=0.0,              # spherical mix: lat_ring = √(1−β²)·lat_ring + β·ε_fresh; 0=no mixing, stays on-manifold
+    border_noise_beta=0.0,            # same spherical mix applied directly to latents in a ring around main_mask_bin; 0 = off
+    border_noise_radius=2,            # dilation radius (latent pixels) that defines the border ring width
     init_latent="composed",           # denoising start latent: "composed" (SDEdit z_init) | "inversion" (lat at t_bg) | "noise" (pure fresh noise)
     z0_sdedit=None,                   # preprocessed z0 for SDEdit background (grayscale/blur); replaces z0 in SDEdit formula
 
@@ -331,6 +333,9 @@ def reconstruct_ddim_with_attention_restoration(
         randn = torch.randn_like(latents)
         scale = (1.0 - initial_noise_beta ** 2) ** 0.5
         latents = main_mask * latents + (1.0 - main_mask) * (scale * latents + initial_noise_beta * randn)
+
+    if _alphas_cumprod_dev is None and border_noise_beta > 0.0:
+        _alphas_cumprod_dev = _cast(pipe.scheduler.alphas_cumprod)
 
     # ── reconstruction attention recorder ────────────────────────────────────
     recorder = None
@@ -596,6 +601,17 @@ def reconstruct_ddim_with_attention_restoration(
                 latents = Mbc2_recon * recon_ring_source + (1.0 - Mbc2_recon) * latents
                 std_new = latents.detach().float().std(dim=(1, 2, 3), keepdim=True) + 1e-8
                 latents = _cast(latents * (std_ref2 / std_new))
+
+            # ── border ring noise ─────────────────────────────────────────────
+            if border_noise_beta > 0.0 and need_base_mask and _alphas_cumprod_dev is not None:
+                ab_t = _alphas_cumprod_dev[t_int]
+                noise_scale = (1.0 - ab_t).sqrt()
+                signal_scale = (1.0 - border_noise_beta ** 2) ** 0.5
+                border_ring = (dilate_mask(main_mask_bin, radius=border_noise_radius) - main_mask_bin).clamp(0, 1)
+                border_bc = border_ring.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1])
+                fresh_noise = torch.randn_like(latents)
+                noised_border = signal_scale * latents + border_noise_beta * noise_scale * fresh_noise
+                latents = _cast(border_bc * noised_border + (1.0 - border_bc) * latents)
 
             # ── debug saving ──────────────────────────────────────────────────
             if debug_dir is not None and ((step_index - start_index) % max(1, save_debug_every) == 0):
