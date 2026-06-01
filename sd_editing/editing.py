@@ -336,7 +336,7 @@ def reconstruct_ddim_with_attention_restoration(
         scale = (1.0 - initial_noise_beta ** 2) ** 0.5
         latents = main_mask * latents + (1.0 - main_mask) * (scale * latents + initial_noise_beta * randn)
 
-    if _alphas_cumprod_dev is None and border_noise_beta > 0.0:
+    if _alphas_cumprod_dev is None and (border_noise_beta > 0.0 or transmission_source == "randn"):
         _alphas_cumprod_dev = _cast(pipe.scheduler.alphas_cumprod)
 
     # ── reconstruction attention recorder ────────────────────────────────────
@@ -597,12 +597,22 @@ def reconstruct_ddim_with_attention_restoration(
                 latents_generic_step if (dual_recon_transmission and latents_generic_step is not None)
                 else lat_ring_source
             )
-            if transmission_alpha > 0.0 and recon_ring_source is not None and float(mask2_recon.max().item()) > 0.0:
+            if (transmission_source != "randn" and transmission_alpha > 0.0
+                    and recon_ring_source is not None and float(mask2_recon.max().item()) > 0.0):
                 Mbc2_recon = mask2_recon.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1])
                 std_ref2 = latents.detach().float().std(dim=(1, 2, 3), keepdim=True) + 1e-8
                 latents = Mbc2_recon * recon_ring_source + (1.0 - Mbc2_recon) * latents
                 std_new = latents.detach().float().std(dim=(1, 2, 3), keepdim=True) + 1e-8
                 latents = _cast(latents * (std_ref2 / std_new))
+            elif (transmission_source == "randn" and ring_noise_beta > 0.0
+                    and _alphas_cumprod_dev is not None and float(mask2_recon.max().item()) > 0.0):
+                ab_t = _alphas_cumprod_dev[t_int]
+                noise_scale = (1.0 - ab_t).sqrt()
+                signal_scale = (1.0 - ring_noise_beta ** 2) ** 0.5
+                Mbc2_recon = mask2_recon.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1])
+                fresh_noise = torch.randn_like(latents)
+                noised = signal_scale * latents + ring_noise_beta * noise_scale * fresh_noise
+                latents = _cast(Mbc2_recon * noised + (1.0 - Mbc2_recon) * latents)
 
             # ── border ring noise ─────────────────────────────────────────────
             if (border_noise_beta > 0.0 and need_base_mask and _alphas_cumprod_dev is not None
