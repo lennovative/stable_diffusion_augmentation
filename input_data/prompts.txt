@@ -1,25 +1,25 @@
-a {} in the snow at night
-a {} in a dense foggy forest
-a {} caught in a lightning storm
-a {} in heavy rainfall at dusk
-a {} in a blizzard, snow-covered ground
-a {} in a futuristic city at night
-a {} in a warmly lit cozy kitchen
-a {} in a dark cave
-a {} in a neon-lit arcade
-a {} in a dusty old library
-a {} at the beach, blazing sun
-a {} with a sunset in the background
-a {} under harsh midday overhead sun, strong shadows
-a {} under blue stage lights
-a {} on the moon
-a {} on mars
-a {} in an ancient temple
-a {} in outer space, stars and nebula behind
-a {} on a volcanic island, lava glowing nearby
-a {} on a frozen lake, clear reflection
-a {} on wet cobblestone streets at night, reflections
-a {} beside a still mountain lake, mirror reflection
-a {} in the jungle, mossy ground
-a {} in the desert, red sand
-a {} deep underwater, surrounded by fish
+photo of a {} in the snow at night
+photo of a {} in a dense foggy forest
+photo of a {} caught in a lightning storm
+photo of a {} in heavy rainfall at dusk
+photo of a {} in a blizzard, snow-covered ground
+photo of a {} in a futuristic city at night
+photo of a {} in a warmly lit cozy kitchen
+photo of a {} in a dark cave
+photo of a {} in a neon-lit arcade
+photo of a {} in a dusty old library
+photo of a {} at the beach, blazing sun
+photo of a {} with a sunset in the background
+photo of a {} under harsh midday overhead sun, strong shadows
+photo of a {} under blue stage lights
+photo of a {} on the moon
+photo of a {} on mars
+photo of a {} in an ancient temple
+photo of a {} in outer space, stars and nebula behind
+photo of a {} on a volcanic island, lava glowing nearby
+photo of a {} on a frozen lake, clear reflection
+photo of a {} on wet cobblestone streets at night, reflections
+photo of a {} beside a still mountain lake, mirror reflection
+photo of a {} in the jungle, mossy ground
+photo of a {} in the desert, red sand
+photo of a {} deep underwater, surrounded by fish
