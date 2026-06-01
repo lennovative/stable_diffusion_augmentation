@@ -170,6 +170,8 @@ def main():
         ring_noise_beta=p1.getfloat("ring_noise_beta", fallback=0.0),
         border_noise_beta=p1.getfloat("border_noise_beta", fallback=0.0),
         border_noise_radius=p1.getint("border_noise_radius", fallback=2),
+        border_noise_start_frac=p1.getfloat("border_noise_start_frac", fallback=0.0),
+        border_noise_end_frac=p1.getfloat("border_noise_end_frac", fallback=1.0),
         init_latent=p1.get("init_latent", fallback="composed"),
         sdedit_bg_preprocess=p1.get("sdedit_bg_preprocess", fallback="none"),
         sdedit_bg_blur_radius=p1.getfloat("sdedit_bg_blur_radius", fallback=3.0),

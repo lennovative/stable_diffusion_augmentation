@@ -91,6 +91,8 @@ def run_batch_inversion_and_editing(
     ring_noise_beta: float = 0.0,            # spherical noise mixing on ring source; 0 = off
     border_noise_beta: float = 0.0,          # spherical noise mix applied to latents at border ring; 0 = off
     border_noise_radius: int = 2,            # dilation radius (latent pixels) for the border ring
+    border_noise_start_frac: float = 0.0,    # start fraction for border noise
+    border_noise_end_frac: float = 1.0,      # end fraction for border noise
     init_latent: str = "composed",           # "composed" (SDEdit z_init) | "inversion" (lat at t_bg) | "noise" (pure fresh noise)
     sdedit_bg_preprocess: str = "none",      # "none" | "grayscale" | "grayscale_blur"
     sdedit_bg_blur_radius: float = 3.0,
@@ -290,6 +292,8 @@ def run_batch_inversion_and_editing(
                     ring_noise_beta=ring_noise_beta,
                     border_noise_beta=border_noise_beta,
                     border_noise_radius=border_noise_radius,
+                    border_noise_start_frac=border_noise_start_frac,
+                    border_noise_end_frac=border_noise_end_frac,
                     init_latent=init_latent,
                     z0=inv.get("z0"),
                     z0_sdedit=z0_sdedit,

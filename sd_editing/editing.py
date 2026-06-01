@@ -91,6 +91,8 @@ def reconstruct_ddim_with_attention_restoration(
     ring_noise_beta=0.0,              # spherical mix: lat_ring = √(1−β²)·lat_ring + β·ε_fresh; 0=no mixing, stays on-manifold
     border_noise_beta=0.0,            # same spherical mix applied directly to latents in a ring around main_mask_bin; 0 = off
     border_noise_radius=2,            # dilation radius (latent pixels) that defines the border ring width
+    border_noise_start_frac=0.0,      # start applying border noise after this fraction of denoising
+    border_noise_end_frac=1.0,        # stop applying border noise after this fraction of denoising
     init_latent="composed",           # denoising start latent: "composed" (SDEdit z_init) | "inversion" (lat at t_bg) | "noise" (pure fresh noise)
     z0_sdedit=None,                   # preprocessed z0 for SDEdit background (grayscale/blur); replaces z0 in SDEdit formula
 
@@ -603,7 +605,8 @@ def reconstruct_ddim_with_attention_restoration(
                 latents = _cast(latents * (std_ref2 / std_new))
 
             # ── border ring noise ─────────────────────────────────────────────
-            if border_noise_beta > 0.0 and need_base_mask and _alphas_cumprod_dev is not None:
+            if (border_noise_beta > 0.0 and need_base_mask and _alphas_cumprod_dev is not None
+                    and progress >= border_noise_start_frac and progress < border_noise_end_frac):
                 ab_t = _alphas_cumprod_dev[t_int]
                 noise_scale = (1.0 - ab_t).sqrt()
                 signal_scale = (1.0 - border_noise_beta ** 2) ** 0.5
