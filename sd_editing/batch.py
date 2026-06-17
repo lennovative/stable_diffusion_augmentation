@@ -90,7 +90,8 @@ def run_batch_inversion_and_editing(
     transmission_source: str = "inversion",  # "inversion" | "noise"
     ring_noise_beta: float = 0.0,            # spherical noise mixing on ring source; 0 = off
     border_noise_beta: float = 0.0,          # spherical noise mix applied to latents at border ring; 0 = off
-    border_noise_radius: int = 2,            # dilation radius (latent pixels) for the border ring
+    border_noise_mode: str = "ring",         # "ring" = dilated border only | "background" = full area outside mask
+    border_noise_radius: int = 2,            # dilation radius (latent pixels); only used when border_noise_mode="ring"
     border_noise_start_frac: float = 0.0,    # start fraction for border noise
     border_noise_end_frac: float = 1.0,      # end fraction for border noise
     init_latent: str = "composed",           # "composed" (SDEdit z_init) | "inversion" (lat at t_bg) | "noise" (pure fresh noise)
@@ -125,6 +126,7 @@ def run_batch_inversion_and_editing(
     polish_token_replace_generic: str = "subject",
 
     save_pre_polish: bool = True,
+    track_recon_alignment: bool = False,
 ) -> List[dict]:
     """
     Process all images in base_dir/<concept>/ for every concept listed in
@@ -250,7 +252,7 @@ def run_batch_inversion_and_editing(
 
                 print(f"[EDIT:PASS1] {image_path.name}  prompt={edit_prompt!r}")
 
-                edited = reconstruct_ddim_with_attention_restoration(
+                pass1_result = reconstruct_ddim_with_attention_restoration(
                     pipe=pipe,
                     latents_all=inv["latents_all"],
                     attns_all=inv["attns_all"],
@@ -291,6 +293,7 @@ def run_batch_inversion_and_editing(
                     transmission_source=transmission_source,
                     ring_noise_beta=ring_noise_beta,
                     border_noise_beta=border_noise_beta,
+                    border_noise_mode=border_noise_mode,
                     border_noise_radius=border_noise_radius,
                     border_noise_start_frac=border_noise_start_frac,
                     border_noise_end_frac=border_noise_end_frac,
@@ -301,7 +304,14 @@ def run_batch_inversion_and_editing(
                     debug_dir=str(pass1_debug) if pass1_debug else None,
                     save_debug_every=save_debug_every,
                     save_debug_latents=save_debug_latents,
+                    track_recon_alignment=track_recon_alignment,
                 )
+
+                alignment_data = None
+                if track_recon_alignment:
+                    edited, alignment_data = pass1_result
+                else:
+                    edited = pass1_result
 
                 pre_polish_path = None
                 if save_pre_polish:
@@ -415,14 +425,15 @@ def run_batch_inversion_and_editing(
                             f.write(f"polish_transmission_alpha: {polish_transmission_alpha}\n")
 
                 summary.append({
-                    "folder_name": folder_name,
-                    "image_path": str(image_path),
-                    "tokens": tokens,
+                    "folder_name":    folder_name,
+                    "image_path":     str(image_path),
+                    "tokens":         tokens,
                     "target_attribute": target_attribute,
-                    "edit_prompt": edit_prompt,
-                    "edited_path": str(edited_path),
+                    "edit_prompt":    edit_prompt,
+                    "edited_path":    str(edited_path),
                     "pre_polish_path": str(pre_polish_path) if pre_polish_path else None,
-                    "debug_root": str(debug_root),
+                    "debug_root":     str(debug_root),
+                    "alignment":      alignment_data,
                 })
 
     return summary

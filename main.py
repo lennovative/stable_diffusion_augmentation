@@ -7,6 +7,7 @@ Usage:
 """
 
 import argparse
+import json
 import shutil
 import configparser
 from pathlib import Path
@@ -169,6 +170,7 @@ def main():
         transmission_source=p1.get("transmission_source", fallback="inversion"),
         ring_noise_beta=p1.getfloat("ring_noise_beta", fallback=0.0),
         border_noise_beta=p1.getfloat("border_noise_beta", fallback=0.0),
+        border_noise_mode=p1.get("border_noise_mode", fallback="ring"),
         border_noise_radius=p1.getint("border_noise_radius", fallback=2),
         border_noise_start_frac=p1.getfloat("border_noise_start_frac", fallback=0.0),
         border_noise_end_frac=p1.getfloat("border_noise_end_frac", fallback=1.0),
@@ -198,9 +200,74 @@ def main():
         polish_token_replace_frac=p2.getfloat("token_replace_frac"),
         polish_token_replace_generic=p2["token_replace_generic"],
         save_pre_polish=p2.getboolean("save_pre_polish"),
+        track_recon_alignment=g.getboolean("track_recon_alignment", fallback=False),
     )
 
+    if g.getboolean("track_recon_alignment", fallback=False):
+        _save_alignment(results, run_dir)
+
     print(f"\nDone. {len(results)} images edited → {run_dir}")
+
+
+def _save_alignment(results: list, run_dir: Path):
+    """Save per-step alignment JSON and plot averaged leakage curve."""
+    import numpy as np
+
+    records = [
+        {
+            "concept":     r["folder_name"],
+            "image":       Path(r["image_path"]).name,
+            "edit_prompt": r["edit_prompt"],
+            "steps":       r["alignment"],
+        }
+        for r in results
+        if r.get("alignment")
+    ]
+    if not records:
+        print("[ALIGN] No alignment data collected (recorder may not have been active).")
+        return
+
+    out_json = run_dir / "attn_alignment.json"
+    out_json.write_text(json.dumps(records, indent=2))
+    print(f"[ALIGN] Saved alignment data → {out_json}")
+
+    # Average leakage per denoising position across all images.
+    # Use list position (not absolute step index) so runs with different
+    # start_from_step values still align correctly.
+    max_steps = max(len(r["steps"]) for r in records)
+    leakage_by_pos  = [[] for _ in range(max_steps)]
+    progress_by_pos = [[] for _ in range(max_steps)]
+    for rec in records:
+        for pos, s in enumerate(rec["steps"]):
+            leakage_by_pos[pos].append(s["leakage"])
+            progress_by_pos[pos].append(s["progress"])
+
+    means = np.array([np.mean(v) for v in leakage_by_pos if v])
+    stds  = np.array([np.std(v)  for v in leakage_by_pos if v])
+    xs    = np.array([np.mean(p) for p in progress_by_pos if p])
+
+    try:
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots(figsize=(8, 4.5))
+        ax.plot(xs, means, linewidth=2, label="mean leakage")
+        ax.fill_between(xs, means - stds, means + stds, alpha=0.25, label="±1 std")
+        ax.set_xlabel("Denoising progress (0 = start, 1 = clean image)", fontsize=11)
+        ax.set_ylabel("Leakage  (attention outside concept mask)", fontsize=11)
+        ax.set_title("Reconstruction attention leakage over denoising steps", fontsize=12, fontweight="bold")
+        ax.set_ylim(0, 1)
+        ax.yaxis.grid(True, linestyle="--", alpha=0.4)
+        ax.set_axisbelow(True)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.legend(fontsize=9)
+        plt.tight_layout()
+        out_png = run_dir / "attn_alignment.png"
+        out_pdf = run_dir / "attn_alignment.pdf"
+        plt.savefig(out_png, dpi=150, bbox_inches="tight")
+        plt.savefig(out_pdf, bbox_inches="tight")
+        plt.close()
+        print(f"[ALIGN] Saved alignment plot → {out_png}")
+    except ImportError:
+        print("[ALIGN] matplotlib not available; skipping plot.")
 
 
 if __name__ == "__main__":

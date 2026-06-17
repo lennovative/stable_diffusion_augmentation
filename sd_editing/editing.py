@@ -90,11 +90,15 @@ def reconstruct_ddim_with_attention_restoration(
     transmission_source="inversion",  # ring source: "inversion" (lat_orig) | "noise" (q(z_t|z_0_bg), colour-neutral)
     ring_noise_beta=0.0,              # spherical mix: lat_ring = √(1−β²)·lat_ring + β·ε_fresh; 0=no mixing, stays on-manifold
     border_noise_beta=0.0,            # same spherical mix applied directly to latents in a ring around main_mask_bin; 0 = off
-    border_noise_radius=2,            # dilation radius (latent pixels) that defines the border ring width
+    border_noise_mode="ring",         # "ring" = dilated border only | "background" = full area outside mask
+    border_noise_radius=2,            # dilation radius (latent pixels); only used when border_noise_mode="ring"
     border_noise_start_frac=0.0,      # start applying border noise after this fraction of denoising
     border_noise_end_frac=1.0,        # stop applying border noise after this fraction of denoising
     init_latent="composed",           # denoising start latent: "composed" (SDEdit z_init) | "inversion" (lat at t_bg) | "noise" (pure fresh noise)
     z0_sdedit=None,                   # preprocessed z0 for SDEdit background (grayscale/blur); replaces z0 in SDEdit formula
+
+    # attention alignment tracking
+    track_recon_alignment=False,
 
     # debug
     debug_dir=None,
@@ -390,6 +394,8 @@ def reconstruct_ddim_with_attention_restoration(
         else:
             print(f"[TOKEN_REPLACE/DUAL_RECON] No concept template matched in {prompt!r}. Generic embedding disabled.")
 
+    alignment_steps = []  # populated when track_recon_alignment=True
+
     try:
         for step_index in range(start_index, num_inference_steps):
             progress = float(step_index) / float(num_inference_steps)
@@ -503,6 +509,25 @@ def reconstruct_ddim_with_attention_restoration(
                 recon_map_raw = recorder.step_maps[-1]
             else:
                 recon_map_raw = None
+
+            # Attention alignment metric: fraction of recon-attention energy that
+            # falls outside the concept mask (leakage into background).
+            # Tracked per denoising step; only meaningful when the recorder is active
+            # and a concept mask has been computed.
+            if track_recon_alignment and recon_map_raw is not None and float(main_mask_bin.max()) > 0:
+                rm = _to_2d(recon_map_raw).detach().float()
+                rm = F.interpolate(rm[None, None], size=latent_spatial, mode="bilinear", align_corners=False)[0, 0]
+                rm = rm.clamp(0)
+                total = float(rm.sum()) + 1e-8
+                mask_2d = main_mask_bin[0, 0].float()
+                containment = float((rm * mask_2d).sum()) / total
+                alignment_steps.append({
+                    "step":        step_index,
+                    "t":           t_int,
+                    "progress":    round(progress, 4),
+                    "containment": round(containment, 6),
+                    "leakage":     round(1.0 - containment, 6),
+                })
 
             # ── generic UNet pass (dual_recon_transmission) ───────────────────
             # Leakage is detected from the normal pass attention (recon_map_raw).
@@ -620,7 +645,10 @@ def reconstruct_ddim_with_attention_restoration(
                 ab_t = _alphas_cumprod_dev[t_int]
                 noise_scale = (1.0 - ab_t).sqrt()
                 signal_scale = (1.0 - border_noise_beta ** 2) ** 0.5
-                border_ring = (dilate_mask(main_mask_bin, radius=border_noise_radius) - main_mask_bin).clamp(0, 1)
+                if border_noise_mode == "background":
+                    border_ring = (1.0 - main_mask_bin).clamp(0, 1)
+                else:
+                    border_ring = (dilate_mask(main_mask_bin, radius=border_noise_radius) - main_mask_bin).clamp(0, 1)
                 border_bc = border_ring.expand(1, latents.shape[1], latent_spatial[0], latent_spatial[1])
                 fresh_noise = torch.randn_like(latents)
                 noised_border = signal_scale * latents + border_noise_beta * noise_scale * fresh_noise
@@ -689,4 +717,7 @@ def reconstruct_ddim_with_attention_restoration(
     finally:
         restore_attention_processors(pipe, saved_attn_processors)
 
-    return decode_latents_to_pil(pipe, latents)
+    image = decode_latents_to_pil(pipe, latents)
+    if track_recon_alignment:
+        return image, alignment_steps
+    return image
