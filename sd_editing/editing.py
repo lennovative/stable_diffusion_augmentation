@@ -515,7 +515,7 @@ def reconstruct_ddim_with_attention_restoration(
             # Tracked per denoising step; only meaningful when the recorder is active
             # and a concept mask has been computed.
             if track_recon_alignment and recon_map_raw is not None and float(main_mask_bin.max()) > 0:
-                rm = _to_2d(recon_map_raw).detach().float()
+                rm = _to_2d(recon_map_raw).detach().float().to(device=device)
                 rm = F.interpolate(rm[None, None], size=latent_spatial, mode="bilinear", align_corners=False)[0, 0]
                 rm = rm.clamp(0)
                 total = float(rm.sum()) + 1e-8
